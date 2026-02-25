@@ -346,45 +346,69 @@ function extractId(raw){
   return null;
 }
 
-// ── Search ────────────────────────────────────────────────────────────────
+// ── Search ────────────────────────────────────────────
+var _searchQuery='', _searchContinuation='', _searchLoading=false;
+
 function doSearch(query){
+  _searchQuery=query;
+  _searchContinuation='';
+  _searchLoading=false;
   document.getElementById('results-empty').style.display='none';
   document.getElementById('results-list').innerHTML=
-    '<div class="spinner"><div class="spin"></div><br>Searching\u2026</div>';
-  fetch(SERVER+'/api/search?q='+encodeURIComponent(query))
+    '<div class="spinner"><div class="spin"></div><br>Searching…</div>';
+  loadMoreResults(true);
+}
+
+function loadMoreResults(fresh){
+  if(_searchLoading) return;
+  if(!fresh && !_searchContinuation) return;
+  _searchLoading=true;
+
+  var url=SERVER+'/api/search?q='+encodeURIComponent(_searchQuery);
+  if(!fresh && _searchContinuation)
+    url+='&continuation='+encodeURIComponent(_searchContinuation);
+
+  fetch(url)
     .then(function(r){return r.json()})
-    .then(function(d){renderResults(d.results||[])})
+    .then(function(d){
+      _searchContinuation=d.continuation||'';
+      _searchLoading=false;
+      appendResults(d.results||[], fresh);
+    })
     .catch(function(){
-      document.getElementById('results-list').innerHTML=
-        '<div class="col-empty" style="color:var(--err)">\u2715 Search failed.<br>Is the server running?</div>';
+      _searchLoading=false;
+      if(fresh)
+        document.getElementById('results-list').innerHTML=
+          '<div class="col-empty" style="color:var(--err)">✕ Search failed.<br>Is the server running?</div>';
     });
 }
 
-function renderResults(results){
+function appendResults(results, fresh){
   var el=document.getElementById('results-list');
-  if(!results.length){
-    el.innerHTML='<div class="col-empty">No results found</div>';
-    return;
+  if(fresh){
+    if(!results.length){
+      el.innerHTML='<div class="col-empty">No results found</div>';
+      return;
+    }
+    el.innerHTML='';
   }
-  el.innerHTML=results.map(function(r){
-    // Encode for onclick attribute
+  results.forEach(function(r){
     var safe=JSON.stringify(r).replace(/'/g,"&#39;");
-    return '<div class="r-card" onclick=\'addResult('+safe+')\'>'
-      +'<div class="r-thumb-wrap">'
-        +'<img src="'+r.thumb+'" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
-        +(r.duration?'<div class="r-dur">'+esc(r.duration)+'</div>':'')
-      +'</div>'
-      +'<div class="r-body">'
-        +'<div class="r-title">'+esc(r.title)+'</div>'
-        +'<div class="r-meta-row">'
-          +'<div class="r-channel">'+esc(r.channel||'')+'</div>'
-          +'<button class="r-add-btn" onclick="event.stopPropagation();addResult('+safe+')">+ Add</button>'
-        +'</div>'
-      +'</div>'
-      +'</div>';
-  }).join('');
+    var card=document.createElement('div');
+    card.className='r-card';
+    card.onclick=function(){addResult(r)};
+    card.innerHTML=
+      '<div class="r-thumb-wrap">'      +'<img src="'+r.thumb+'" alt="" loading="lazy" onerror="this.style.display=\'none\'">'      +(r.duration?'<div class="r-dur">'+esc(r.duration)+'</div>':'')      +'</div>'      +'<div class="r-body">'        +'<div class="r-title">'+esc(r.title)+'</div>'        +'<div class="r-meta-row">'          +'<div class="r-channel">'+esc(r.channel||'')+'</div>'          +'<button class="r-add-btn" onclick="event.stopPropagation();addResult('+safe+')">+ Add</button>'        +'</div>'      +'</div>';
+    el.appendChild(card);
+  });
 }
 
+document.getElementById('results-scroll').addEventListener('scroll', function(){
+  var el=this;
+  if(el.scrollTop+el.clientHeight >= el.scrollHeight-120){
+    loadMoreResults(false);
+  }
+});
 function addResult(r){
   addToQueue(r);
   toast('\u2713 '+r.title.slice(0,28)+'\u2026 added','ok');
