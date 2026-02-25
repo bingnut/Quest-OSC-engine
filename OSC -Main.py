@@ -80,8 +80,13 @@ song_state = {
     "playing": False,
 }
 
-PRESETS_FILE = Path(__file__).parent / "presets.json"
-CONFIG_FILE  = Path(__file__).parent / "config.json"
+if getattr(sys, 'frozen', False):
+    _BASE = Path(sys.executable).parent
+else:
+    _BASE = Path(__file__).parent
+
+PRESETS_FILE = _BASE / "presets.json"
+CONFIG_FILE  = _BASE / "config.json"
 
 DEFAULT_CONFIG = {
     "ip":   "127.0.0.1",
