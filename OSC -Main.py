@@ -171,7 +171,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     song_str = f"♪ {song_state['title']} [{fmt_duration(remaining)}]" if song_state["title"] else "♪ Nothing Playing"
     text = text.replace("{song}", song_str)
     text = text.replace(r" \|\ ", "  |  ")
-    engine_tag = "⚙ OSC Quest Engine"
+    engine_tag = "⚙ OSC Quest Engine\nBy -service-"
     text = text.replace("{engine}", engine_tag if engine_on else "")
     if engine_on and "{engine}" not in text:
         text = text.rstrip() + "\n" + engine_tag
