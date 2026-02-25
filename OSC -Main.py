@@ -121,12 +121,25 @@ PRESETS_FILE = BASE_DIR / "presets.json"
 CONFIG_FILE  = BASE_DIR / "config.json"
 
 
+spotify_state = {
+    "title":    "",
+    "artist":   "",
+    "duration": 0,
+    "elapsed":  0,
+    "playing":  False,
+    "token":    "",
+    "token_expiry": 0,
+}
+
 DEFAULT_CONFIG = {
     "ip":   "127.0.0.1",
     "port": 9000,
     "http_port": 8765,
     "typing_indicator": True,
     "send_immediately": False,
+    "spotify_client_id":     "",
+    "spotify_client_secret": "",
+    "spotify_refresh_token": "",
 }
 
 
@@ -202,6 +215,15 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     remaining = song_state["duration"] - song_state["elapsed"]
     song_str = f"♪ {song_state['title']} [{fmt_duration(remaining)}]" if song_state["title"] else "♪ Nothing Playing"
     text = text.replace("{song}", song_str)
+    sp = spotify_state
+    sp_remaining = sp["duration"] - sp["elapsed"]
+    if sp["title"] and sp["artist"]:
+        sp_str = f"♪ {sp['title']} — {sp['artist']} [{fmt_duration(sp_remaining)}]"
+    elif sp["title"]:
+        sp_str = f"♪ {sp['title']} [{fmt_duration(sp_remaining)}]"
+    else:
+        sp_str = "♪ Nothing Playing"
+    text = text.replace("{song_spot}", sp_str)
     text = text.replace(r" \|\ ", "  |  ")
     engine_tag = "⚙ OSC Quest Engine\nBy -service-"
     text = text.replace("{engine}", engine_tag if engine_on else "")
@@ -209,6 +231,101 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
         text = text.rstrip() + "\n" + engine_tag
     return text
 
+
+
+def spotify_get_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+    """Exchange refresh token for access token."""
+    import base64
+    creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    data = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode()
+    req = urllib.request.Request(
+        "https://accounts.spotify.com/api/token",
+        data=data,
+        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        j = json.loads(resp.read())
+    return j.get("access_token", "")
+
+
+def spotify_get_auth_url(client_id: str, redirect_uri: str) -> str:
+    params = urllib.parse.urlencode({
+        "client_id": client_id,
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "scope": "user-read-currently-playing user-read-playback-state",
+    })
+    return f"https://accounts.spotify.com/authorize?{params}"
+
+
+def spotify_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
+    import base64
+    creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    data = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }).encode()
+    req = urllib.request.Request(
+        "https://accounts.spotify.com/api/token",
+        data=data,
+        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read())
+
+
+def spotify_fetch_current(access_token: str) -> dict:
+    req = urllib.request.Request(
+        "https://api.spotify.com/v1/me/player/currently-playing",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status == 204:
+                return {}
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise
+        return {}
+
+
+def _spotify_tick(get_config_fn):
+    """Background thread: polls Spotify every 5s and updates spotify_state."""
+    while True:
+        try:
+            cfg = get_config_fn()
+            client_id     = cfg.get("spotify_client_id", "")
+            client_secret = cfg.get("spotify_client_secret", "")
+            refresh_token = cfg.get("spotify_refresh_token", "")
+            if not all([client_id, client_secret, refresh_token]):
+                time.sleep(5)
+                continue
+            # Refresh access token if needed
+            now = time.time()
+            if not spotify_state["token"] or now >= spotify_state["token_expiry"] - 30:
+                token = spotify_get_token(client_id, client_secret, refresh_token)
+                spotify_state["token"] = token
+                spotify_state["token_expiry"] = now + 3600
+            if not spotify_state["token"]:
+                time.sleep(5)
+                continue
+            data = spotify_fetch_current(spotify_state["token"])
+            if data and data.get("item"):
+                item = data["item"]
+                spotify_state["title"]    = item.get("name", "")
+                spotify_state["artist"]   = ", ".join(a["name"] for a in item.get("artists", []))
+                spotify_state["duration"] = item.get("duration_ms", 0) // 1000
+                spotify_state["elapsed"]  = data.get("progress_ms", 0) // 1000
+                spotify_state["playing"]  = data.get("is_playing", False)
+            else:
+                spotify_state["title"]   = ""
+                spotify_state["artist"]  = ""
+                spotify_state["playing"] = False
+        except Exception:
+            pass
+        time.sleep(5)
 
 # ─────────────────────────────────────────────
 #  HTTP Server for YouTube Song Sync
@@ -1289,6 +1406,7 @@ class VRCChatbox(tk.Tk):
         # Start HTTP server
         self._start_http()
         threading.Thread(target=_song_tick, daemon=True).start()
+        threading.Thread(target=_spotify_tick, args=(lambda: self.config_data,), daemon=True).start()
 
         # Poll song state from HTTP server periodically
         self._poll_song()
@@ -1368,6 +1486,7 @@ class VRCChatbox(tk.Tk):
         self._build_tab_macros()
         self._build_tab_song()
         self._build_tab_ports()
+        self._build_tab_spotify()
         self._build_tab_output()
 
     def _build_sidebar(self):
@@ -1379,6 +1498,7 @@ class VRCChatbox(tk.Tk):
             ("presets",  "Presets",  "📋"),
             ("macros",   "Macros",   "⚡"),
             ("song",     "Song Sync","🎵"),
+            ("spotify",  "Spotify",  "🎧"),
             ("ports",    "Ports",    "🔌"),
             ("output",   "Output",   "📡"),
         ]
@@ -1747,6 +1867,131 @@ class VRCChatbox(tk.Tk):
                  font=FONT_MONO).pack(anchor="w", pady=2)
         tk.Label(info, text="Set VRChat OSC Receive Port to 9000 in VRC settings.",
                  bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
+
+    def _build_tab_spotify(self):
+        f = tk.Frame(self._content, bg=DARK)
+        self._tabs["spotify"] = f
+
+        hdr = tk.Frame(f, bg=DARK, pady=20)
+        hdr.pack(fill="x", padx=28)
+        tk.Label(hdr, text="Spotify", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
+        self._spot_status_lbl = tk.Label(hdr, text="", bg=DARK, fg=MUTED, font=FONT_SMALL)
+        self._spot_status_lbl.pack(side="right")
+
+        def section(title, hint=""):
+            c = tk.Frame(f, bg=CARD, padx=20, pady=16,
+                         highlightthickness=1, highlightbackground=BORDER)
+            c.pack(fill="x", padx=28, pady=6)
+            hrow = tk.Frame(c, bg=CARD); hrow.pack(fill="x")
+            tk.Label(hrow, text=title, bg=CARD, fg=TEXT, font=FONT_BOLD).pack(side="left")
+            if hint:
+                tk.Label(hrow, text=hint, bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=8)
+            return c
+
+        # Step 1 — credentials
+        cred = section("Step 1 — Spotify App Credentials",
+                       "Create an app at developer.spotify.com/dashboard")
+        r1 = tk.Frame(cred, bg=CARD, pady=6); r1.pack(fill="x")
+        tk.Label(r1, text="Client ID:", bg=CARD, fg=MUTED, font=FONT_SMALL,
+                 width=16, anchor="w").pack(side="left")
+        self._spot_id_var = tk.StringVar(value=self.config_data.get("spotify_client_id", ""))
+        StyledEntry(r1, textvariable=self._spot_id_var, width=40).pack(side="left")
+
+        r2 = tk.Frame(cred, bg=CARD, pady=6); r2.pack(fill="x")
+        tk.Label(r2, text="Client Secret:", bg=CARD, fg=MUTED, font=FONT_SMALL,
+                 width=16, anchor="w").pack(side="left")
+        self._spot_secret_var = tk.StringVar(value=self.config_data.get("spotify_client_secret", ""))
+        StyledEntry(r2, textvariable=self._spot_secret_var, width=40, show="*").pack(side="left")
+
+        tk.Label(cred, text="Redirect URI to set in your Spotify app: http://localhost:8888/callback",
+                 bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=(8, 0))
+
+        # Step 2 — authorize
+        auth = section("Step 2 — Authorize", "Opens browser to log in with Spotify")
+        auth_row = tk.Frame(auth, bg=CARD, pady=4); auth_row.pack(fill="x")
+        StyledButton(auth_row, "🌐 Open Auth URL",
+                     command=self._spotify_open_auth).pack(side="left")
+        tk.Label(auth_row, text="Then paste the full redirect URL below:",
+                 bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=12)
+
+        r3 = tk.Frame(auth, bg=CARD, pady=6); r3.pack(fill="x")
+        tk.Label(r3, text="Redirect URL:", bg=CARD, fg=MUTED, font=FONT_SMALL,
+                 width=16, anchor="w").pack(side="left")
+        self._spot_redirect_var = tk.StringVar()
+        StyledEntry(r3, textvariable=self._spot_redirect_var, width=60).pack(side="left")
+        StyledButton(r3, "Exchange", command=self._spotify_exchange).pack(side="left", padx=8)
+
+        # Step 3 — status
+        live = section("Live Status")
+        self._spot_now_lbl = tk.Label(live, text="Not connected", bg=CARD, fg=MUTED,
+                                      font=FONT_MONO, wraplength=500, justify="left")
+        self._spot_now_lbl.pack(anchor="w", pady=4)
+        tk.Label(live, text="Use {song_spot} in your chatbox messages",
+                 bg=CARD, fg=ACCENT, font=FONT_SMALL).pack(anchor="w")
+
+        # Save button
+        act = tk.Frame(f, bg=DARK, padx=28, pady=10); act.pack(fill="x")
+        StyledButton(act, "💾 Save Credentials", command=self._spotify_save).pack(side="left")
+
+        # Poll display
+        self._spotify_ui_poll()
+
+    def _spotify_open_auth(self):
+        self._spotify_save()
+        cid = self.config_data.get("spotify_client_id", "").strip()
+        if not cid:
+            messagebox.showwarning("Spotify", "Enter your Client ID first.")
+            return
+        url = spotify_get_auth_url(cid, "http://localhost:8888/callback")
+        import webbrowser
+        webbrowser.open(url)
+
+    def _spotify_exchange(self):
+        self._spotify_save()
+        redirect_url = self._spot_redirect_var.get().strip()
+        if not redirect_url:
+            return
+        from urllib.parse import urlparse, parse_qs
+        code = parse_qs(urlparse(redirect_url).query).get("code", [""])[0]
+        if not code:
+            messagebox.showerror("Spotify", "No code found in URL.")
+            return
+        try:
+            tokens = spotify_exchange_code(
+                self.config_data["spotify_client_id"],
+                self.config_data["spotify_client_secret"],
+                code,
+                "http://localhost:8888/callback",
+            )
+            self.config_data["spotify_refresh_token"] = tokens.get("refresh_token", "")
+            spotify_state["token"]        = tokens.get("access_token", "")
+            spotify_state["token_expiry"] = time.time() + tokens.get("expires_in", 3600)
+            self._save_config()
+            self._spot_status_lbl.config(text="✓ Authorized", fg=SUCCESS)
+            messagebox.showinfo("Spotify", "Authorized! Spotify is now linked.")
+        except Exception as e:
+            messagebox.showerror("Spotify", f"Failed: {e}")
+
+    def _spotify_save(self):
+        self.config_data["spotify_client_id"]     = self._spot_id_var.get().strip()
+        self.config_data["spotify_client_secret"] = self._spot_secret_var.get().strip()
+        self._save_config()
+
+    def _spotify_ui_poll(self):
+        sp = spotify_state
+        if sp["title"]:
+            rem = sp["duration"] - sp["elapsed"]
+            txt = f"♪  {sp['title']} — {sp['artist']}\n   {fmt_duration(sp['elapsed'])} / {fmt_duration(sp['duration'])}  [{fmt_duration(rem)} left]"
+            self._spot_now_lbl.config(text=txt, fg=ACCENT2)
+            self._spot_status_lbl.config(
+                text="▶ Playing" if sp["playing"] else "⏸ Paused", fg=SUCCESS)
+        elif self.config_data.get("spotify_refresh_token"):
+            self._spot_now_lbl.config(text="Connected — nothing playing", fg=MUTED)
+            self._spot_status_lbl.config(text="● Connected", fg=SUCCESS)
+        else:
+            self._spot_now_lbl.config(text="Not connected", fg=MUTED)
+            self._spot_status_lbl.config(text="", fg=MUTED)
+        self.after(3000, self._spotify_ui_poll)
 
     def _build_tab_output(self):
         f = tk.Frame(self._content, bg=DARK)
