@@ -121,25 +121,12 @@ PRESETS_FILE = BASE_DIR / "presets.json"
 CONFIG_FILE  = BASE_DIR / "config.json"
 
 
-spotify_state = {
-    "title":    "",
-    "artist":   "",
-    "duration": 0,
-    "elapsed":  0,
-    "playing":  False,
-    "token":    "",
-    "token_expiry": 0,
-}
-
 DEFAULT_CONFIG = {
     "ip":   "127.0.0.1",
     "port": 9000,
     "http_port": 8765,
     "typing_indicator": True,
     "send_immediately": False,
-    "spotify_client_id":     "",
-    "spotify_client_secret": "",
-    "spotify_refresh_token": "",
 }
 
 
@@ -215,15 +202,6 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     remaining = song_state["duration"] - song_state["elapsed"]
     song_str = f"♪ {song_state['title']} [{fmt_duration(remaining)}]" if song_state["title"] else "♪ Nothing Playing"
     text = text.replace("{song}", song_str)
-    sp = spotify_state
-    sp_remaining = sp["duration"] - sp["elapsed"]
-    if sp["title"] and sp["artist"]:
-        sp_str = f"♪ {sp['title']} — {sp['artist']} [{fmt_duration(sp_remaining)}]"
-    elif sp["title"]:
-        sp_str = f"♪ {sp['title']} [{fmt_duration(sp_remaining)}]"
-    else:
-        sp_str = "♪ Nothing Playing"
-    text = text.replace("{song_spot}", sp_str)
     text = text.replace(r" \|\ ", "  |  ")
     engine_tag = "⚙ OSC Quest Engine\nBy -service-"
     text = text.replace("{engine}", engine_tag if engine_on else "")
@@ -233,99 +211,104 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 
-def spotify_get_token(client_id: str, client_secret: str, refresh_token: str) -> str:
-    """Exchange refresh token for access token."""
-    import base64
-    creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    data = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode()
-    req = urllib.request.Request(
-        "https://accounts.spotify.com/api/token",
-        data=data,
-        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}
-    )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        j = json.loads(resp.read())
-    return j.get("access_token", "")
 
 
-def spotify_get_auth_url(client_id: str, redirect_uri: str) -> str:
-    params = urllib.parse.urlencode({
-        "client_id": client_id,
-        "response_type": "code",
-        "redirect_uri": redirect_uri,
-        "scope": "user-read-currently-playing user-read-playback-state",
-    })
-    return f"https://accounts.spotify.com/authorize?{params}"
+# Pending items to push to the web player queue
+_pending_queue: list = []
 
+def resolve_media_url(url: str) -> list:
+    """
+    Given a URL, return a list of {id, title, artist, thumb, source, url} dicts.
+    Handles: YT video, YT playlist, SoundCloud track/playlist.
+    """
+    url = url.strip()
+    results = []
 
-def spotify_exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
-    import base64
-    creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    data = urllib.parse.urlencode({
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-    }).encode()
-    req = urllib.request.Request(
-        "https://accounts.spotify.com/api/token",
-        data=data,
-        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}
-    )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read())
-
-
-def spotify_fetch_current(access_token: str) -> dict:
-    req = urllib.request.Request(
-        "https://api.spotify.com/v1/me/player/currently-playing",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            if resp.status == 204:
-                return {}
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            raise
-        return {}
-
-
-def _spotify_tick(get_config_fn):
-    """Background thread: polls Spotify every 5s and updates spotify_state."""
-    while True:
+    # ── YouTube playlist ──────────────────────────────────────────────────
+    yt_pl = re.search(r'[?&]list=([A-Za-z0-9_-]+)', url)
+    if yt_pl and 'youtube.com' in url or 'youtu.be' in url:
+        pl_id = yt_pl.group(1)
         try:
-            cfg = get_config_fn()
-            client_id     = cfg.get("spotify_client_id", "")
-            client_secret = cfg.get("spotify_client_secret", "")
-            refresh_token = cfg.get("spotify_refresh_token", "")
-            if not all([client_id, client_secret, refresh_token]):
-                time.sleep(5)
-                continue
-            # Refresh access token if needed
-            now = time.time()
-            if not spotify_state["token"] or now >= spotify_state["token_expiry"] - 30:
-                token = spotify_get_token(client_id, client_secret, refresh_token)
-                spotify_state["token"] = token
-                spotify_state["token_expiry"] = now + 3600
-            if not spotify_state["token"]:
-                time.sleep(5)
-                continue
-            data = spotify_fetch_current(spotify_state["token"])
-            if data and data.get("item"):
-                item = data["item"]
-                spotify_state["title"]    = item.get("name", "")
-                spotify_state["artist"]   = ", ".join(a["name"] for a in item.get("artists", []))
-                spotify_state["duration"] = item.get("duration_ms", 0) // 1000
-                spotify_state["elapsed"]  = data.get("progress_ms", 0) // 1000
-                spotify_state["playing"]  = data.get("is_playing", False)
-            else:
-                spotify_state["title"]   = ""
-                spotify_state["artist"]  = ""
-                spotify_state["playing"] = False
+            pl_url = f"https://www.youtube.com/playlist?list={pl_id}"
+            req = urllib.request.Request(pl_url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode('utf-8', errors='replace')
+            data = _parse_ytInitialData(html)
+            if data:
+                try:
+                    items = (data['contents']['twoColumnBrowseResultsRenderer']
+                                 ['tabs'][0]['tabRenderer']['content']
+                                 ['sectionListRenderer']['contents'][0]
+                                 ['itemSectionRenderer']['contents'][0]
+                                 ['playlistVideoListRenderer']['contents'])
+                    for item in items:
+                        v = item.get('playlistVideoRenderer', {})
+                        vid = v.get('videoId', '')
+                        if not vid:
+                            continue
+                        title = ''
+                        try: title = v['title']['runs'][0]['text']
+                        except Exception: pass
+                        artist = ''
+                        try: artist = v['shortBylineText']['runs'][0]['text']
+                        except Exception: pass
+                        results.append({
+                            'id': vid, 'title': title, 'artist': artist,
+                            'thumb': f'https://i.ytimg.com/vi/{vid}/mqdefault.jpg',
+                            'source': 'youtube',
+                            'url': f'https://www.youtube.com/watch?v={vid}',
+                        })
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f'[Playlist] YT playlist error: {e}')
+        if results:
+            return results
+
+    # ── YouTube single video ──────────────────────────────────────────────
+    yt_id = None
+    m = (re.search(r'[?&]v=([A-Za-z0-9_-]{11})', url) or
+         re.search(r'youtu\.be/([A-Za-z0-9_-]{11})', url) or
+         re.search(r'embed/([A-Za-z0-9_-]{11})', url) or
+         re.search(r'shorts/([A-Za-z0-9_-]{11})', url))
+    if m:
+        yt_id = m.group(1)
+    elif re.match(r'^[A-Za-z0-9_-]{11}$', url):
+        yt_id = url
+    if yt_id:
+        title, artist = '', ''
+        try:
+            oe = urllib.request.urlopen(
+                f'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={yt_id}&format=json',
+                timeout=5)
+            j = json.loads(oe.read())
+            title  = j.get('title', '')
+            artist = j.get('author_name', '')
         except Exception:
             pass
-        time.sleep(5)
+        return [{'id': yt_id, 'title': title or yt_id, 'artist': artist,
+                 'thumb': f'https://i.ytimg.com/vi/{yt_id}/mqdefault.jpg',
+                 'source': 'youtube',
+                 'url': f'https://www.youtube.com/watch?v={yt_id}'}]
+
+    # ── SoundCloud ────────────────────────────────────────────────────────
+    if 'soundcloud.com' in url:
+        try:
+            oe_url = f'https://soundcloud.com/oembed?url={urllib.parse.quote(url)}&format=json'
+            req = urllib.request.Request(oe_url, headers={'User-Agent': 'OSC-Quest-Engine'})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                j = json.loads(resp.read())
+            title  = j.get('title', '')
+            artist = j.get('author_name', '')
+            thumb  = j.get('thumbnail_url', '')
+            return [{'id': url, 'title': title, 'artist': artist,
+                     'thumb': thumb, 'source': 'soundcloud', 'url': url}]
+        except Exception as e:
+            print(f'[SoundCloud] oEmbed error: {e}')
+            return [{'id': url, 'title': url, 'artist': '', 'thumb': '',
+                     'source': 'soundcloud', 'url': url}]
+
+    return []
 
 # ─────────────────────────────────────────────
 #  HTTP Server for YouTube Song Sync
@@ -1114,6 +1097,10 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/song":
             self._json(song_state)
+        elif self.path == "/api/queue/poll":
+            items = _pending_queue[:]
+            _pending_queue.clear()
+            self._json({"items": items})
         elif self.path.startswith("/api/search"):
             self._handle_search()
         elif self.path in ("/", "/index.html"):
@@ -1126,10 +1113,18 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers()
 
     def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body   = json.loads(self.rfile.read(length)) if length else {}
         if self.path == "/api/song":
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length))
             song_state.update(body)
+            self._json({"ok": True})
+        elif self.path == "/api/queue/push":
+            url = body.get("url", "").strip()
+            if url:
+                def _resolve():
+                    items = resolve_media_url(url)
+                    _pending_queue.extend(items)
+                threading.Thread(target=_resolve, daemon=True).start()
             self._json({"ok": True})
 
     def _handle_search(self):
@@ -1406,7 +1401,6 @@ class VRCChatbox(tk.Tk):
         # Start HTTP server
         self._start_http()
         threading.Thread(target=_song_tick, daemon=True).start()
-        threading.Thread(target=_spotify_tick, args=(lambda: self.config_data,), daemon=True).start()
 
         # Poll song state from HTTP server periodically
         self._poll_song()
@@ -1485,8 +1479,8 @@ class VRCChatbox(tk.Tk):
         self._build_tab_presets()
         self._build_tab_macros()
         self._build_tab_song()
+        self._build_tab_player()
         self._build_tab_ports()
-        self._build_tab_spotify()
         self._build_tab_output()
 
     def _build_sidebar(self):
@@ -1498,7 +1492,7 @@ class VRCChatbox(tk.Tk):
             ("presets",  "Presets",  "📋"),
             ("macros",   "Macros",   "⚡"),
             ("song",     "Song Sync","🎵"),
-            ("spotify",  "Spotify",  "🎧"),
+            ("player",   "Player",   "▶"),
             ("ports",    "Ports",    "🔌"),
             ("output",   "Output",   "📡"),
         ]
@@ -1868,15 +1862,16 @@ class VRCChatbox(tk.Tk):
         tk.Label(info, text="Set VRChat OSC Receive Port to 9000 in VRC settings.",
                  bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
 
-    def _build_tab_spotify(self):
+    def _build_tab_player(self):
         f = tk.Frame(self._content, bg=DARK)
-        self._tabs["spotify"] = f
+        self._tabs["player"] = f
 
         hdr = tk.Frame(f, bg=DARK, pady=20)
         hdr.pack(fill="x", padx=28)
-        tk.Label(hdr, text="Spotify", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
-        self._spot_status_lbl = tk.Label(hdr, text="", bg=DARK, fg=MUTED, font=FONT_SMALL)
-        self._spot_status_lbl.pack(side="right")
+        tk.Label(hdr, text="Send to Player", bg=DARK, fg=TEXT,
+                 font=FONT_HUGE).pack(side="left")
+        tk.Label(hdr, text="Pushes to the web player at your HTTP server",
+                 bg=DARK, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=12)
 
         def section(title, hint=""):
             c = tk.Frame(f, bg=CARD, padx=20, pady=16,
@@ -1888,154 +1883,73 @@ class VRCChatbox(tk.Tk):
                 tk.Label(hrow, text=hint, bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=8)
             return c
 
-        # Step 1 — credentials
-        cred = section("Step 1 — Spotify App Credentials",
-                       "Create an app at developer.spotify.com/dashboard")
-        r1 = tk.Frame(cred, bg=CARD, pady=6); r1.pack(fill="x")
-        tk.Label(r1, text="Client ID:", bg=CARD, fg=MUTED, font=FONT_SMALL,
-                 width=16, anchor="w").pack(side="left")
-        self._spot_id_var = tk.StringVar(value=self.config_data.get("spotify_client_id", ""))
-        StyledEntry(r1, textvariable=self._spot_id_var, width=40).pack(side="left")
+        # URL input
+        url_card = section("Add to Queue", "YouTube video, playlist, or SoundCloud URL")
+        ur = tk.Frame(url_card, bg=CARD, pady=8); ur.pack(fill="x")
+        tk.Label(ur, text="URL:", bg=CARD, fg=MUTED, font=FONT_SMALL,
+                 width=10, anchor="w").pack(side="left")
+        self._player_url_var = tk.StringVar()
+        url_entry = StyledEntry(ur, textvariable=self._player_url_var, width=55)
+        url_entry.pack(side="left", padx=(0, 8))
 
-        r2 = tk.Frame(cred, bg=CARD, pady=6); r2.pack(fill="x")
-        tk.Label(r2, text="Client Secret:", bg=CARD, fg=MUTED, font=FONT_SMALL,
-                 width=16, anchor="w").pack(side="left")
-        self._spot_secret_var = tk.StringVar(value=self.config_data.get("spotify_client_secret", ""))
-        StyledEntry(r2, textvariable=self._spot_secret_var, width=40, show="*").pack(side="left")
+        def _send():
+            url = self._player_url_var.get().strip()
+            if not url:
+                return
+            self._player_status.config(text="Resolving...", fg=MUTED)
+            def _do():
+                items = resolve_media_url(url)
+                if items:
+                    _pending_queue.extend(items)
+                    n = len(items)
+                    self.after(0, lambda: self._player_status.config(
+                        text=f"✓ {n} item{'s' if n>1 else ''} queued", fg=SUCCESS))
+                    self.after(0, lambda: self._player_url_var.set(""))
+                    self.after(0, self._player_refresh_queue)
+                else:
+                    self.after(0, lambda: self._player_status.config(
+                        text="✗ Could not resolve URL", fg=ERR))
+            threading.Thread(target=_do, daemon=True).start()
 
-        tk.Label(cred, text="Redirect URI to set in your Spotify app: http://localhost:8888/callback",
-                 bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=(8, 0))
+        url_entry.bind("<Return>", lambda e: _send())
+        StyledButton(ur, "▶ Add to Queue", command=_send).pack(side="left")
+        self._player_status = tk.Label(url_card, text="", bg=CARD, fg=MUTED, font=FONT_SMALL)
+        self._player_status.pack(anchor="w", pady=(4,0))
 
-        # Step 2 — authorize
-        auth = section("Step 2 — Authorize", "Scan the QR code with your phone")
+        # Pending queue display
+        q_card = section("Pending Queue", "Items waiting to be picked up by the web player")
+        qf = tk.Frame(q_card, bg=CARD); qf.pack(fill="x")
+        self._player_queue_frame = tk.Frame(qf, bg=CARD)
+        self._player_queue_frame.pack(fill="x")
+        tk.Label(q_card, text="Items are consumed when the web player polls /api/queue/poll",
+                 bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=(6,0))
 
-        auth_row = tk.Frame(auth, bg=CARD, pady=4); auth_row.pack(fill="x")
-        StyledButton(auth_row, "📷 Generate QR Code",
-                     command=self._spotify_show_qr).pack(side="left")
+        act = tk.Frame(f, bg=DARK, padx=28, pady=8); act.pack(fill="x")
+        StyledButton(act, "🗑 Clear Queue",
+                     command=lambda: (_pending_queue.clear(), self._player_refresh_queue())).pack(side="left")
 
-        # QR frame — hidden until generated, hidden again after exchange
-        self._spot_qr_frame = tk.Frame(auth, bg=CARD)
-        self._spot_qr_canvas = tk.Canvas(
-            self._spot_qr_frame, width=200, height=200,
-            bg=CARD, highlightthickness=0)
-        self._spot_qr_canvas.pack(pady=(8, 4))
-        self._spot_qr_url_lbl = tk.Label(
-            self._spot_qr_frame, text="", bg=CARD, fg=ACCENT,
-            font=("Segoe UI", 8), cursor="hand2", wraplength=400)
-        self._spot_qr_url_lbl.pack(pady=(0, 6))
-        self._spot_qr_url_lbl.bind("<Button-1>",
-            lambda e: __import__("webbrowser").open(self._spot_qr_url_lbl.cget("text")))
+        self._player_refresh_queue()
 
-        r3 = tk.Frame(auth, bg=CARD, pady=6); r3.pack(fill="x")
-        tk.Label(r3, text="Redirect URL:", bg=CARD, fg=MUTED, font=FONT_SMALL,
-                 width=16, anchor="w").pack(side="left")
-        self._spot_redirect_var = tk.StringVar()
-        StyledEntry(r3, textvariable=self._spot_redirect_var, width=60).pack(side="left")
-        StyledButton(r3, "Exchange", command=self._spotify_exchange).pack(side="left", padx=8)
-
-        # Step 3 — status
-        live = section("Live Status")
-        self._spot_now_lbl = tk.Label(live, text="Not connected", bg=CARD, fg=MUTED,
-                                      font=FONT_MONO, wraplength=500, justify="left")
-        self._spot_now_lbl.pack(anchor="w", pady=4)
-        tk.Label(live, text="Use {song_spot} in your chatbox messages",
-                 bg=CARD, fg=ACCENT, font=FONT_SMALL).pack(anchor="w")
-
-        # Save button
-        act = tk.Frame(f, bg=DARK, padx=28, pady=10); act.pack(fill="x")
-        StyledButton(act, "💾 Save Credentials", command=self._spotify_save).pack(side="left")
-
-        # Poll display
-        self._spotify_ui_poll()
-
-    def _spotify_show_qr(self):
-        self._spotify_save()
-        cid = self.config_data.get("spotify_client_id", "").strip()
-        if not cid:
-            messagebox.showwarning("Spotify", "Enter your Client ID first.")
+    def _player_refresh_queue(self):
+        for w in self._player_queue_frame.winfo_children():
+            w.destroy()
+        if not _pending_queue:
+            tk.Label(self._player_queue_frame, text="Queue is empty",
+                     bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=4)
             return
-        auth_url = spotify_get_auth_url(cid, "http://localhost:8888/callback")
-        self._spot_qr_url_lbl.config(text=auth_url)
-        canvas = self._spot_qr_canvas
-        canvas.delete("all")
-        canvas.create_text(100, 100, text="Loading...", fill=MUTED, font=FONT_SMALL)
-        self._spot_qr_frame.pack(after=self._spot_qr_frame.master.winfo_children()[0],
-                                  fill="x", pady=(4, 0))
-
-        def _load():
-            try:
-                import base64 as _b64
-                qr_api = ("https://api.qrserver.com/v1/create-qr-code/"
-                          "?size=200x200&margin=8&data=" +
-                          urllib.parse.quote(auth_url, safe=""))
-                req = urllib.request.Request(qr_api, headers={"User-Agent": "OSC-Quest-Engine"})
-                png_bytes = urllib.request.urlopen(req, timeout=8).read()
-                b64str = _b64.b64encode(png_bytes).decode()
-                def _draw():
-                    try:
-                        img = tk.PhotoImage(data=b64str)
-                        canvas._qr_img = img
-                        canvas.config(width=img.width(), height=img.height())
-                        canvas.delete("all")
-                        canvas.create_image(0, 0, anchor="nw", image=img)
-                    except Exception as ex:
-                        canvas.create_text(100, 100, text=f"QR failed: {ex}",
-                                           fill=ERR, font=FONT_SMALL, width=190)
-                self.after(0, _draw)
-            except Exception as ex:
-                self.after(0, lambda: canvas.create_text(
-                    100, 100, text=f"Could not load QR\n{ex}\nClick the URL below",
-                    fill=MUTED, font=FONT_SMALL, width=190, justify="center"))
-        threading.Thread(target=_load, daemon=True).start()
-
-    def _spotify_exchange(self):
-        self._spotify_save()
-        redirect_url = self._spot_redirect_var.get().strip()
-        if not redirect_url:
-            return
-        from urllib.parse import urlparse, parse_qs
-        code = parse_qs(urlparse(redirect_url).query).get("code", [""])[0]
-        if not code:
-            messagebox.showerror("Spotify", "No code found in URL.")
-            return
-        try:
-            tokens = spotify_exchange_code(
-                self.config_data["spotify_client_id"],
-                self.config_data["spotify_client_secret"],
-                code,
-                "http://localhost:8888/callback",
-            )
-            self.config_data["spotify_refresh_token"] = tokens.get("refresh_token", "")
-            spotify_state["token"]        = tokens.get("access_token", "")
-            spotify_state["token_expiry"] = time.time() + tokens.get("expires_in", 3600)
-            self._save_config()
-            self._spot_status_lbl.config(text="✓ Authorized", fg=SUCCESS)
-            # Hide QR code now that we're authorized
-            self._spot_qr_frame.pack_forget()
-            messagebox.showinfo("Spotify", "Authorized! Spotify is now linked.")
-        except Exception as e:
-            messagebox.showerror("Spotify", f"Failed: {e}")
-
-    def _spotify_save(self):
-        self.config_data["spotify_client_id"]     = self._spot_id_var.get().strip()
-        self.config_data["spotify_client_secret"] = self._spot_secret_var.get().strip()
-        self._save_config()
-
-    def _spotify_ui_poll(self):
-        sp = spotify_state
-        if sp["title"]:
-            rem = sp["duration"] - sp["elapsed"]
-            txt = f"♪  {sp['title']} — {sp['artist']}\n   {fmt_duration(sp['elapsed'])} / {fmt_duration(sp['duration'])}  [{fmt_duration(rem)} left]"
-            self._spot_now_lbl.config(text=txt, fg=ACCENT2)
-            self._spot_status_lbl.config(
-                text="▶ Playing" if sp["playing"] else "⏸ Paused", fg=SUCCESS)
-        elif self.config_data.get("spotify_refresh_token"):
-            self._spot_now_lbl.config(text="Connected — nothing playing", fg=MUTED)
-            self._spot_status_lbl.config(text="● Connected", fg=SUCCESS)
-        else:
-            self._spot_now_lbl.config(text="Not connected", fg=MUTED)
-            self._spot_status_lbl.config(text="", fg=MUTED)
-        self.after(3000, self._spotify_ui_poll)
+        for i, item in enumerate(_pending_queue[:12]):
+            row = tk.Frame(self._player_queue_frame, bg=CARD)
+            row.pack(fill="x", pady=2)
+            src_icon = "🎵" if item.get("source") == "soundcloud" else "▶"
+            tk.Label(row, text=f"{src_icon}  {item.get('title','?')}",
+                     bg=CARD, fg=TEXT, font=FONT_SMALL).pack(side="left")
+            if item.get("artist"):
+                tk.Label(row, text=f"— {item['artist']}",
+                         bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=6)
+        if len(_pending_queue) > 12:
+            tk.Label(self._player_queue_frame,
+                     text=f"... and {len(_pending_queue)-12} more",
+                     bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
 
     def _build_tab_output(self):
         f = tk.Frame(self._content, bg=DARK)
