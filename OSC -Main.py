@@ -1028,7 +1028,7 @@ def youtube_search(query: str, continuation: str = "") -> dict:
                 "context": {
                     "client": {
                         "clientName": "WEB",
-                        "clientVersion": "2.20231121.09.00",
+                        "clientVersion": "2.20231129.00",
                     }
                 }
             }).encode()
@@ -1541,7 +1541,7 @@ class VRCChatbox(tk.Tk):
         self._engine_tag_lbl.pack(anchor="w", padx=14, pady=(0, 4))
 
         # Version footer
-        tk.Label(self._sidebar, text="OSC Quest Engine v1.0", bg=PANEL, fg=MUTED,
+        tk.Label(self._sidebar, text="OSC Quest Engine v1.5 - spotify update", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
     # ── Tab: Chatbox ──────────────────────────
