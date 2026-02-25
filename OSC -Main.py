@@ -1028,7 +1028,7 @@ def youtube_search(query: str, continuation: str = "") -> dict:
                 "context": {
                     "client": {
                         "clientName": "WEB",
-                        "clientVersion": "2.20231129.00",
+                        "clientVersion": "2.20231121.09.00",
                     }
                 }
             }).encode()
@@ -1541,7 +1541,7 @@ class VRCChatbox(tk.Tk):
         self._engine_tag_lbl.pack(anchor="w", padx=14, pady=(0, 4))
 
         # Version footer
-        tk.Label(self._sidebar, text="OSC Quest Engine v1.5 - spotify update", bg=PANEL, fg=MUTED,
+        tk.Label(self._sidebar, text="OSC Quest Engine v1.0", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
     # ── Tab: Chatbox ──────────────────────────
@@ -1907,12 +1907,24 @@ class VRCChatbox(tk.Tk):
                  bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=(8, 0))
 
         # Step 2 — authorize
-        auth = section("Step 2 — Authorize", "Opens browser to log in with Spotify")
+        auth = section("Step 2 — Authorize", "Scan the QR code with your phone")
+
         auth_row = tk.Frame(auth, bg=CARD, pady=4); auth_row.pack(fill="x")
-        StyledButton(auth_row, "🌐 Open Auth URL",
-                     command=self._spotify_open_auth).pack(side="left")
-        tk.Label(auth_row, text="Then paste the full redirect URL below:",
-                 bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=12)
+        StyledButton(auth_row, "📷 Generate QR Code",
+                     command=self._spotify_show_qr).pack(side="left")
+
+        # QR frame — hidden until generated, hidden again after exchange
+        self._spot_qr_frame = tk.Frame(auth, bg=CARD)
+        self._spot_qr_canvas = tk.Canvas(
+            self._spot_qr_frame, width=200, height=200,
+            bg=CARD, highlightthickness=0)
+        self._spot_qr_canvas.pack(pady=(8, 4))
+        self._spot_qr_url_lbl = tk.Label(
+            self._spot_qr_frame, text="", bg=CARD, fg=ACCENT,
+            font=("Segoe UI", 8), cursor="hand2", wraplength=400)
+        self._spot_qr_url_lbl.pack(pady=(0, 6))
+        self._spot_qr_url_lbl.bind("<Button-1>",
+            lambda e: __import__("webbrowser").open(self._spot_qr_url_lbl.cget("text")))
 
         r3 = tk.Frame(auth, bg=CARD, pady=6); r3.pack(fill="x")
         tk.Label(r3, text="Redirect URL:", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1936,15 +1948,45 @@ class VRCChatbox(tk.Tk):
         # Poll display
         self._spotify_ui_poll()
 
-    def _spotify_open_auth(self):
+    def _spotify_show_qr(self):
         self._spotify_save()
         cid = self.config_data.get("spotify_client_id", "").strip()
         if not cid:
             messagebox.showwarning("Spotify", "Enter your Client ID first.")
             return
-        url = spotify_get_auth_url(cid, "http://localhost:8888/callback")
-        import webbrowser
-        webbrowser.open(url)
+        auth_url = spotify_get_auth_url(cid, "http://localhost:8888/callback")
+        self._spot_qr_url_lbl.config(text=auth_url)
+        canvas = self._spot_qr_canvas
+        canvas.delete("all")
+        canvas.create_text(100, 100, text="Loading...", fill=MUTED, font=FONT_SMALL)
+        self._spot_qr_frame.pack(after=self._spot_qr_frame.master.winfo_children()[0],
+                                  fill="x", pady=(4, 0))
+
+        def _load():
+            try:
+                import base64 as _b64
+                qr_api = ("https://api.qrserver.com/v1/create-qr-code/"
+                          "?size=200x200&margin=8&data=" +
+                          urllib.parse.quote(auth_url, safe=""))
+                req = urllib.request.Request(qr_api, headers={"User-Agent": "OSC-Quest-Engine"})
+                png_bytes = urllib.request.urlopen(req, timeout=8).read()
+                b64str = _b64.b64encode(png_bytes).decode()
+                def _draw():
+                    try:
+                        img = tk.PhotoImage(data=b64str)
+                        canvas._qr_img = img
+                        canvas.config(width=img.width(), height=img.height())
+                        canvas.delete("all")
+                        canvas.create_image(0, 0, anchor="nw", image=img)
+                    except Exception as ex:
+                        canvas.create_text(100, 100, text=f"QR failed: {ex}",
+                                           fill=ERR, font=FONT_SMALL, width=190)
+                self.after(0, _draw)
+            except Exception as ex:
+                self.after(0, lambda: canvas.create_text(
+                    100, 100, text=f"Could not load QR\n{ex}\nClick the URL below",
+                    fill=MUTED, font=FONT_SMALL, width=190, justify="center"))
+        threading.Thread(target=_load, daemon=True).start()
 
     def _spotify_exchange(self):
         self._spotify_save()
@@ -1968,6 +2010,8 @@ class VRCChatbox(tk.Tk):
             spotify_state["token_expiry"] = time.time() + tokens.get("expires_in", 3600)
             self._save_config()
             self._spot_status_lbl.config(text="✓ Authorized", fg=SUCCESS)
+            # Hide QR code now that we're authorized
+            self._spot_qr_frame.pack_forget()
             messagebox.showinfo("Spotify", "Authorized! Spotify is now linked.")
         except Exception as e:
             messagebox.showerror("Spotify", f"Failed: {e}")
