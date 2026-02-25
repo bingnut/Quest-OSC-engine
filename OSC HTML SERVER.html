@@ -321,8 +321,15 @@ function onPlayerState(e){
   var playing=e.data===YT.PlayerState.PLAYING;
   document.getElementById('play-btn').textContent=playing?'\u23F8 Pause':'\u25B6 Play';
   document.getElementById('live-dot').classList.toggle('on',playing);
+  if(_plMode && playing){
+    // Update now-playing from YT player data
+    try{
+      var d=player.getVideoData();
+      if(d&&d.title) setNPTitle(d.title+(d.author?' \u2014 '+d.author:''));
+    }catch(_){}
+  }
   lastPushed={};pushSync();
-  if(e.data===YT.PlayerState.ENDED) nextTrack();
+  if(!_plMode && e.data===YT.PlayerState.ENDED) nextTrack();
 }
 function onPlayerError(e){
   var m={2:'Invalid ID',5:'HTML5 error',100:'Not found',101:'Embeds disabled',150:'Embeds disabled'};
@@ -341,11 +348,16 @@ function handleInput(){
     return;
   }
 
-  // YouTube playlist
+  // YouTube playlist — load directly into YT player (avoids embed-disabled issues)
   if((raw.indexOf('youtube.com')>=0||raw.indexOf('youtu.be')>=0) && raw.indexOf('list=')>=0){
-    resolveAndQueue(raw);
-    document.getElementById('search-input').value='';
-    return;
+    var plMatch=raw.match(/[?&]list=([A-Za-z0-9_-]+)/);
+    if(plMatch){
+      var plId=plMatch[1];
+      var startId=extractId(raw)||undefined;
+      loadYTPlaylist(plId, startId);
+      document.getElementById('search-input').value='';
+      return;
+    }
   }
 
   // YouTube single video
@@ -391,6 +403,28 @@ function resolveAndQueue(url){
     })
     .catch(function(e){toast('\u2715 Resolve failed','err');});
 }
+
+function loadYTPlaylist(listId, startVideoId){
+  if(!playerReady){ toast('\u26A0 Player not ready yet','err'); return; }
+  document.getElementById('sc-player').style.display='none';
+  document.getElementById('sc-player').src='';
+  document.getElementById('yt-player').style.display='block';
+  document.getElementById('placeholder').style.display='none';
+  scPlaying=false; scWidget=null;
+  // Clear manual queue since YT player manages the playlist internally
+  queue=[]; currentIdx=-1; renderQueue(); updateQueueCount();
+  // Use YT player's own playlist loader — respects embed permissions
+  player.loadPlaylist({list:listId, listType:'playlist',
+    index:0, suggestedQuality:'default'});
+  player.setLoop(true);
+  // Show playlist mode indicator
+  setNPTitle('\u23F5 Loading playlist...');
+  lastPushed={};
+  // Watch for video change to update now-playing title
+  _plMode=true;
+  toast('\u2713 Playlist loaded','ok');
+}
+var _plMode=false;
 
 function extractId(raw){
   var m=raw.match(/[?&]v=([a-zA-Z0-9_-]{11})/)||
@@ -593,6 +627,8 @@ function togglePlay(){
   if(player.getPlayerState()===YT.PlayerState.PLAYING) player.pauseVideo();
   else player.playVideo();
 }
+function plNext(){if(_plMode&&playerReady) player.nextVideo();}
+function plPrev(){if(_plMode&&playerReady) player.previousVideo();}
 
 function skipRel(d){
   var item=queue[currentIdx];
@@ -611,7 +647,7 @@ function stopAll(){
   document.getElementById('sc-player').src='';
   document.getElementById('sc-player').style.display='none';
   document.getElementById('yt-player').style.display='block';
-  currentIdx=-1;scPlaying=false;
+  currentIdx=-1;scPlaying=false;_plMode=false;
   document.getElementById('play-btn').textContent='\u25B6 Play';
   document.getElementById('live-dot').classList.remove('on');
   setNPTitle('');
@@ -691,8 +727,11 @@ async function pushSync(){
     playing=player.getPlayerState()===YT.PlayerState.PLAYING;
     elapsed=Math.floor(player.getCurrentTime()||0);
     dur=Math.floor(player.getDuration()||0);
-    title=item?(item.title+(item.artist?' \u2014 '+item.artist:'')):'';
-    url=item?('https://www.youtube.com/watch?v='+item.id):'';
+    if(_plMode){
+      try{ var _d=player.getVideoData(); title=_d.title||''; url=player.getVideoUrl()||''; }catch(_){}
+    } else {
+      title=item?(item.title+(item.artist?' \u2014 '+item.artist:'')):''; url=item?('https://www.youtube.com/watch?v='+item.id):'';
+    }
   }
   if(lastPushed.title===title&&lastPushed.playing===playing&&
      Math.abs((lastPushed.elapsed||0)-elapsed)<3) return;
