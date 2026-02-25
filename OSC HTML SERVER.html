@@ -1,1 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OSC Quest Engine — Player</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --dark:#0d0d0f;--panel:#16161a;--card:#1e1e24;--border:#2a2a35;
+  --accent:#7c6aff;--accent2:#5eead4;--text:#e8e8f0;--muted:#6b6b80;
+  --success:#22c55e;--err:#ef4444;--hover:#252530;--sel:#2d2b50;
+}
+html,body{height:100%;background:var(--dark);color:var(--text);
+  font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;overflow:hidden}
+.app{display:grid;grid-template-rows:52px 1fr;height:100vh}
 
+/* ── Topbar ── */
+.topbar{background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:12px}
+.topbar h1{font-size:14px;font-weight:700}
+.topbar-sub{font-size:11px;color:var(--muted)}
+.pill{font-size:11px;font-weight:600;padding:4px 11px;border-radius:99px;
+  background:var(--card);color:var(--muted);border:1px solid var(--border);
+  transition:all .2s;white-space:nowrap;margin-left:auto}
+.pill.ok {background:#14532d;color:var(--success);border-color:#166534}
+.pill.err{background:#450a0a;color:var(--err);border-color:#7f1d1d}
+
+/* ── Body: player | search | queue ── */
+.body{display:grid;grid-template-columns:1fr 260px 220px;overflow:hidden}
+
+/* ── Player pane ── */
+.player-pane{display:flex;flex-direction:column;background:#000;overflow:hidden}
+.player-wrap{position:relative;flex:1;min-height:0;background:#000}
+#yt-player{position:absolute;inset:0;width:100%;height:100%;border:none}
+.placeholder{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;color:var(--muted);
+  font-size:13px;pointer-events:none}
+.placeholder-icon{font-size:52px;opacity:.15;line-height:1}
+
+/* ── Controls ── */
+.controls{background:var(--panel);border-top:1px solid var(--border);
+  padding:12px 18px 14px;flex-shrink:0}
+.np-row{display:flex;align-items:center;gap:7px;margin-bottom:3px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);
+  flex-shrink:0;transition:background .3s}
+.live-dot.on{background:var(--success);box-shadow:0 0 7px var(--success);
+  animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.np-label{font-size:10px;font-weight:700;letter-spacing:.8px;
+  color:var(--muted);text-transform:uppercase}
+.np-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;color:var(--text);margin-bottom:9px}
+.np-title.empty{color:var(--muted);font-weight:400;font-style:italic}
+.prog-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.prog-track{flex:1;height:5px;background:var(--border);border-radius:99px;
+  overflow:hidden;cursor:pointer;transition:height .1s}
+.prog-track:hover{height:7px}
+.prog-fill{height:100%;width:0%;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  border-radius:99px;pointer-events:none;transition:width .5s linear}
+.prog-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;
+  white-space:nowrap;min-width:88px;text-align:right}
+.btn-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.btn{background:var(--card);border:1px solid var(--border);color:var(--text);
+  border-radius:8px;padding:6px 12px;font-size:12px;font-weight:500;
+  cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--hover);border-color:var(--accent)}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#6a55e8}
+.btn.danger{background:#1a0808;border-color:var(--err);color:var(--err)}
+.btn.danger:hover{background:#2d0d0d}
+.vol-group{margin-left:auto;display:flex;align-items:center;gap:7px}
+.vol-icon{font-size:15px;color:var(--muted);cursor:pointer}
+.vol-icon:hover{color:var(--text)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:80px;height:4px;
+  border-radius:99px;background:var(--border);outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+  width:13px;height:13px;border-radius:50%;background:var(--accent);cursor:pointer}
+
+/* ── Shared sidebar column styles ── */
+.col{display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border)}
+.col-head{padding:10px 12px 8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--panel)}
+.col-title{font-size:10px;font-weight:700;letter-spacing:.9px;
+  color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+.col-scroll{flex:1;overflow-y:auto;padding:8px}
+.col-empty{text-align:center;color:var(--muted);font-size:12px;padding:24px 8px;line-height:1.6}
+
+/* ── Search column ── */
+.search-row{display:flex;gap:6px}
+.search-field{flex:1;min-width:0;background:var(--card);border:1px solid var(--border);
+  color:var(--text);border-radius:8px;padding:7px 9px;font-size:12px;
+  outline:none;transition:border-color .2s}
+.search-field:focus{border-color:var(--accent)}
+.search-field::placeholder{color:var(--muted)}
+.search-btn{background:var(--accent);border:none;color:#fff;border-radius:8px;
+  padding:7px 11px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;
+  transition:background .15s}
+.search-btn:hover{background:#6a55e8}
+
+/* ── Result card (3-line) ── */
+.r-card{display:flex;flex-direction:column;gap:0;
+  background:var(--card);border:1px solid var(--border);border-radius:9px;
+  overflow:hidden;margin-bottom:8px;cursor:pointer;
+  transition:border-color .15s,box-shadow .15s}
+.r-card:hover{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.r-thumb-wrap{position:relative;width:100%;aspect-ratio:16/9;
+  background:var(--border);overflow:hidden;flex-shrink:0}
+.r-thumb-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.r-thumb-wrap .r-dur{position:absolute;bottom:5px;right:6px;
+  background:rgba(0,0,0,.78);color:#fff;font-size:10px;font-weight:700;
+  padding:2px 5px;border-radius:4px;font-variant-numeric:tabular-nums}
+.r-body{padding:7px 9px 8px}
+.r-title{font-size:11px;font-weight:600;color:var(--text);
+  line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;margin-bottom:4px}
+.r-meta-row{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.r-channel{font-size:10px;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;flex:1}
+.r-add-btn{background:var(--accent);border:none;color:#fff;border-radius:6px;
+  padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;
+  flex-shrink:0;transition:background .12s}
+.r-add-btn:hover{background:#6a55e8}
+
+/* ── Spinner ── */
+.spinner{text-align:center;color:var(--muted);font-size:12px;padding:28px 0}
+.spin{display:inline-block;width:18px;height:18px;border:2px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .7s linear infinite;margin-bottom:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Queue column ── */
+.q-col-head{display:flex;align-items:center;justify-content:space-between}
+.q-clear{background:none;border:1px solid var(--border);color:var(--muted);
+  border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;
+  transition:all .12s}
+.q-clear:hover{border-color:var(--err);color:var(--err)}
+
+/* ── Queue card (3-line) ── */
+.q-card{display:flex;gap:8px;background:var(--card);border:1px solid var(--border);
+  border-radius:9px;padding:8px;margin-bottom:6px;cursor:pointer;
+  transition:border-color .15s;position:relative}
+.q-card:hover{border-color:var(--accent)}
+.q-card.current{border-color:var(--accent);background:var(--sel)}
+.q-card.current::before{content:'';position:absolute;left:0;top:0;bottom:0;
+  width:3px;background:var(--accent);border-radius:9px 0 0 9px}
+.q-num{font-size:10px;color:var(--muted);font-weight:700;
+  width:14px;text-align:center;flex-shrink:0;padding-top:1px}
+.q-card.current .q-num{color:var(--accent)}
+.q-thumb-sm{width:52px;height:34px;border-radius:5px;background:var(--border);
+  overflow:hidden;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;color:var(--muted);font-size:13px}
+.q-thumb-sm img{width:100%;height:100%;object-fit:cover;display:block}
+.q-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.q-title-sm{font-size:11px;font-weight:600;color:var(--text);
+  line-height:1.3;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden}
+.q-card.current .q-title-sm{color:var(--accent2)}
+.q-meta-sm{font-size:10px;color:var(--muted)}
+.q-rm{position:absolute;top:5px;right:6px;background:none;border:none;
+  color:var(--muted);cursor:pointer;font-size:12px;opacity:0;
+  transition:opacity .12s,color .12s;line-height:1}
+.q-card:hover .q-rm{opacity:1}
+.q-rm:hover{color:var(--err)}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:20px;left:50%;
+  transform:translateX(-50%) translateY(50px);
+  background:var(--card);border:1px solid var(--border);color:var(--text);
+  padding:9px 18px;border-radius:8px;font-size:12px;font-weight:600;
+  transition:transform .22s,opacity .22s;opacity:0;z-index:200;
+  white-space:nowrap;pointer-events:none}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.ok {border-color:var(--success);color:var(--success)}
+.toast.err{border-color:var(--err);color:var(--err)}
+
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <span style="font-size:20px">&#9881;</span>
+    <div>
+      <h1>OSC Quest Engine</h1>
+      <div class="topbar-sub">YouTube Player &amp; Chatbox Sync</div>
+    </div>
+    <div class="pill" id="sync-pill">Not synced</div>
+  </div>
+
+  <div class="body">
+
+    <!-- ── Player pane ── -->
+    <div class="player-pane">
+      <div class="player-wrap">
+        <div class="placeholder" id="placeholder">
+          <div class="placeholder-icon">&#9654;</div>
+          <div>Search for a video in the sidebar to begin</div>
+        </div>
+        <div id="yt-player"></div>
+      </div>
+      <div class="controls">
+        <div class="np-row">
+          <div class="live-dot" id="live-dot"></div>
+          <div class="np-label">Now Playing</div>
+        </div>
+        <div class="np-title empty" id="np-title">Nothing loaded</div>
+        <div class="prog-row">
+          <div class="prog-track" id="prog-track">
+            <div class="prog-fill" id="prog-fill"></div>
+          </div>
+          <div class="prog-time" id="prog-time">0:00 / 0:00</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="play-btn" onclick="togglePlay()">&#9654; Play</button>
+          <button class="btn" onclick="skipRel(-10)">&#8592; 10s</button>
+          <button class="btn" onclick="skipRel(10)">10s &#8594;</button>
+          <button class="btn" onclick="prevTrack()">&#9664;&#9664;</button>
+          <button class="btn" onclick="nextTrack()">&#9654;&#9654;</button>
+          <button class="btn danger" onclick="stopAll()">&#9632; Stop</button>
+          <div class="vol-group">
+            <span class="vol-icon" id="vol-icon" onclick="toggleMute()">&#128266;</span>
+            <input type="range" id="vol-slider" min="0" max="100" value="80" oninput="setVol(this.value)">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Search column ── -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-title">Search YouTube</div>
+        <div class="search-row">
+          <input class="search-field" id="search-input" type="text"
+            placeholder="Song, artist, or paste URL..."
+            onkeydown="if(event.key==='Enter') handleInput()">
+          <button class="search-btn" onclick="handleInput()">&#9654;</button>
+        </div>
+      </div>
+      <div class="col-scroll" id="results-scroll">
+        <div class="col-empty" id="results-empty">
+          &#128269; Search above to find videos<br>
+          <span style="font-size:10px;opacity:.6">or paste a YouTube URL</span>
+        </div>
+        <div id="results-list"></div>
+      </div>
+    </div>
+
+    <!-- ── Queue column ── -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-title">
+          <div class="q-col-head">
+            Queue <span id="queue-count" style="color:var(--accent);margin-left:4px"></span>
+            <button class="q-clear" onclick="clearQueue()">Clear</button>
+          </div>
+        </div>
+      </div>
+      <div class="col-scroll" id="queue-scroll">
+        <div id="queue-list">
+          <div class="col-empty">
+            &#127911; Add videos from search<br>
+            <span style="font-size:10px;opacity:.6">They'll play in order</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+var player=null, playerReady=false;
+var queue=[], currentIdx=-1, muted=false;
+var lastPushed={}, syncTimer=null, progTimer=null;
+var SERVER = window.location.origin;
+
+// ── YouTube IFrame API ────────────────────────────────────────────────────
+window.onYouTubeIframeAPIReady = function(){
+  player = new YT.Player('yt-player', {
+    height:'100%', width:'100%',
+    playerVars:{autoplay:0,controls:1,rel:0,modestbranding:1,iv_load_policy:3},
+    events:{onReady:onPlayerReady,onStateChange:onPlayerState,onError:onPlayerError}
+  });
+};
+
+function onPlayerReady(){
+  playerReady=true;
+  player.setVolume(parseInt(document.getElementById('vol-slider').value,10));
+  startProgTimer();
+  startSyncTimer();
+}
+
+function onPlayerState(e){
+  var playing=e.data===YT.PlayerState.PLAYING;
+  document.getElementById('play-btn').textContent=playing?'\u23F8 Pause':'\u25B6 Play';
+  document.getElementById('live-dot').classList.toggle('on',playing);
+  lastPushed={};pushSync();
+  if(e.data===YT.PlayerState.ENDED) nextTrack();
+}
+
+function onPlayerError(e){
+  var m={2:'Invalid ID',5:'HTML5 error',100:'Not found',101:'Embeds disabled',150:'Embeds disabled'};
+  toast('\u26A0 '+(m[e.data]||'Error '+e.data),'err');
+}
+
+// ── Input: URL or search ──────────────────────────────────────────────────
+function handleInput(){
+  var raw=document.getElementById('search-input').value.trim();
+  if(!raw) return;
+  var id=extractId(raw);
+  if(id){
+    // Direct URL
+    var item={id:id,title:'Loading\u2026',duration:'',channel:'',
+              thumb:'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg'};
+    addToQueue(item);
+    document.getElementById('search-input').value='';
+    fetch('https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v='+id+'&format=json')
+      .then(function(r){return r.ok?r.json():Promise.reject()})
+      .then(function(d){
+        var q=queue.find(function(x){return x.id===id});
+        if(q){q.title=d.title||q.title;renderQueue();}
+      }).catch(function(){});
+  } else {
+    doSearch(raw);
+  }
+}
+
+function extractId(raw){
+  var m=raw.match(/[?&]v=([a-zA-Z0-9_-]{11})/)||
+        raw.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/)||
+        raw.match(/embed\/([a-zA-Z0-9_-]{11})/)||
+        raw.match(/shorts\/([a-zA-Z0-9_-]{11})/);
+  if(m) return m[1];
+  if(/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+  return null;
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+function doSearch(query){
+  document.getElementById('results-empty').style.display='none';
+  document.getElementById('results-list').innerHTML=
+    '<div class="spinner"><div class="spin"></div><br>Searching\u2026</div>';
+  fetch(SERVER+'/api/search?q='+encodeURIComponent(query))
+    .then(function(r){return r.json()})
+    .then(function(d){renderResults(d.results||[])})
+    .catch(function(){
+      document.getElementById('results-list').innerHTML=
+        '<div class="col-empty" style="color:var(--err)">\u2715 Search failed.<br>Is the server running?</div>';
+    });
+}
+
+function renderResults(results){
+  var el=document.getElementById('results-list');
+  if(!results.length){
+    el.innerHTML='<div class="col-empty">No results found</div>';
+    return;
+  }
+  el.innerHTML=results.map(function(r){
+    // Encode for onclick attribute
+    var safe=JSON.stringify(r).replace(/'/g,"&#39;");
+    return '<div class="r-card" onclick=\'addResult('+safe+')\'>'
+      +'<div class="r-thumb-wrap">'
+        +'<img src="'+r.thumb+'" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+        +(r.duration?'<div class="r-dur">'+esc(r.duration)+'</div>':'')
+      +'</div>'
+      +'<div class="r-body">'
+        +'<div class="r-title">'+esc(r.title)+'</div>'
+        +'<div class="r-meta-row">'
+          +'<div class="r-channel">'+esc(r.channel||'')+'</div>'
+          +'<button class="r-add-btn" onclick="event.stopPropagation();addResult('+safe+')">+ Add</button>'
+        +'</div>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+
+function addResult(r){
+  addToQueue(r);
+  toast('\u2713 '+r.title.slice(0,28)+'\u2026 added','ok');
+}
+
+// ── Queue ─────────────────────────────────────────────────────────────────
+function addToQueue(item){
+  if(queue.some(function(q){return q.id===item.id})){toast('Already in queue');return;}
+  queue.push(item);
+  renderQueue();
+  if(currentIdx===-1) playAt(queue.length-1);
+}
+
+function playAt(idx){
+  if(!playerReady||idx<0||idx>=queue.length) return;
+  currentIdx=idx;
+  var item=queue[idx];
+  document.getElementById('placeholder').style.display='none';
+  player.loadVideoById(item.id);
+  setNPTitle(item.title);
+  renderQueue();
+  updateQueueCount();
+  lastPushed={};
+}
+
+function prevTrack(){if(currentIdx>0) playAt(currentIdx-1);}
+function nextTrack(){
+  if(currentIdx+1<queue.length) playAt(currentIdx+1);
+  else stopAll();
+}
+
+function removeFromQueue(idx,e){
+  if(e) e.stopPropagation();
+  var was=idx===currentIdx;
+  queue.splice(idx,1);
+  if(was){
+    currentIdx=-1;
+    if(queue.length) playAt(Math.min(idx,queue.length-1));
+    else stopAll();
+  } else if(idx<currentIdx) currentIdx--;
+  renderQueue();
+  updateQueueCount();
+}
+
+function clearQueue(){queue=[];currentIdx=-1;stopAll();renderQueue();updateQueueCount();}
+
+function renderQueue(){
+  var el=document.getElementById('queue-list');
+  if(!queue.length){
+    el.innerHTML='<div class="col-empty">&#127911; Add videos from search<br><span style="font-size:10px;opacity:.6">They\'ll play in order</span></div>';
+    return;
+  }
+  el.innerHTML=queue.map(function(item,i){
+    return '<div class="q-card'+(i===currentIdx?' current':'')+'" onclick="playAt('+i+')">'
+      +'<div class="q-num">'+(i===currentIdx?'&#9654;':(i+1))+'</div>'
+      +'<div class="q-thumb-sm">'
+        +(item.thumb?'<img src="'+item.thumb+'" alt="" onerror="this.style.display=\'none\'">':'&#9654;')
+      +'</div>'
+      +'<div class="q-info">'
+        +'<div class="q-title-sm">'+esc(item.title)+'</div>'
+        +'<div class="q-meta-sm">'+(item.duration||item.channel||'&nbsp;')+'</div>'
+      +'</div>'
+      +'<button class="q-rm" onclick="removeFromQueue('+i+',event)" title="Remove">&#x2715;</button>'
+      +'</div>';
+  }).join('');
+  // Auto-scroll current item into view
+  if(currentIdx>=0){
+    var card=el.querySelectorAll('.q-card')[currentIdx];
+    if(card) card.scrollIntoView({block:'nearest',behavior:'smooth'});
+  }
+}
+
+function updateQueueCount(){
+  var el=document.getElementById('queue-count');
+  el.textContent=queue.length?'('+queue.length+')':'';
+}
+
+// ── Player controls ───────────────────────────────────────────────────────
+function togglePlay(){
+  if(!playerReady) return;
+  if(player.getPlayerState()===YT.PlayerState.PLAYING) player.pauseVideo();
+  else player.playVideo();
+}
+
+function skipRel(d){
+  if(!playerReady) return;
+  player.seekTo(Math.max(0,player.getCurrentTime()+d),true);
+  lastPushed={};
+}
+
+function stopAll(){
+  if(playerReady) player.stopVideo();
+  currentIdx=-1;
+  document.getElementById('play-btn').textContent='\u25B6 Play';
+  document.getElementById('live-dot').classList.remove('on');
+  setNPTitle('');
+  document.getElementById('prog-fill').style.width='0%';
+  document.getElementById('prog-time').textContent='0:00 / 0:00';
+  renderQueue();
+  pushStop();
+}
+
+function setVol(v){
+  if(playerReady) player.setVolume(parseInt(v));
+  localStorage.setItem('oqe_vol',v);
+  document.getElementById('vol-icon').textContent=
+    v==0?'\uD83D\uDD07':v<50?'\uD83D\uDD09':'\uD83D\uDD0A';
+  if(muted&&v>0){muted=false;if(playerReady) player.unMute();}
+}
+
+function toggleMute(){
+  if(!playerReady) return;
+  muted=!muted;
+  if(muted){player.mute();document.getElementById('vol-icon').textContent='\uD83D\uDD07';}
+  else{player.unMute();var v=document.getElementById('vol-slider').value;
+    document.getElementById('vol-icon').textContent=v<50?'\uD83D\uDD09':'\uD83D\uDD0A';}
+}
+
+document.getElementById('prog-track').addEventListener('click',function(e){
+  if(!playerReady) return;
+  var rect=this.getBoundingClientRect();
+  var pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+  player.seekTo(pct*(player.getDuration()||0),true);lastPushed={};
+});
+
+// ── Progress timer ────────────────────────────────────────────────────────
+function startProgTimer(){
+  if(progTimer) clearInterval(progTimer);
+  progTimer=setInterval(function(){
+    if(!playerReady) return;
+    var el=player.getCurrentTime()||0, dur=player.getDuration()||0;
+    document.getElementById('prog-fill').style.width=(dur>0?(el/dur*100):0)+'%';
+    document.getElementById('prog-time').textContent=fmt(el)+' / '+fmt(dur);
+    if(currentIdx>=0&&dur>0&&queue[currentIdx]&&!queue[currentIdx]._ds){
+      queue[currentIdx].duration=fmt(dur);queue[currentIdx]._ds=true;renderQueue();
+    }
+  },500);
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────
+function startSyncTimer(){
+  if(syncTimer) clearInterval(syncTimer);
+  syncTimer=setInterval(pushSync,2000);
+}
+
+async function pushSync(){
+  if(!playerReady) return;
+  var playing=player.getPlayerState()===YT.PlayerState.PLAYING;
+  var elapsed=Math.floor(player.getCurrentTime()||0);
+  var dur=Math.floor(player.getDuration()||0);
+  var item=queue[currentIdx];
+  var title=item?item.title:'', url=item?'https://www.youtube.com/watch?v='+item.id:'';
+  if(lastPushed.title===title&&lastPushed.playing===playing&&
+     Math.abs((lastPushed.elapsed||0)-elapsed)<3) return;
+  lastPushed={title,playing,elapsed};
+  try{
+    var r=await fetch(SERVER+'/api/song',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title,url,elapsed,duration:dur,playing}),
+      signal:AbortSignal.timeout(2000)});
+    var j=await r.json();
+    setPill(j.ok?'ok':'err',j.ok?'\u2713 Synced':'\u2715 Error');
+  }catch(e){setPill('err','\u2715 Offline');}
+}
+
+async function pushStop(){
+  lastPushed={};
+  try{await fetch(SERVER+'/api/song',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:'',url:'',elapsed:0,duration:0,playing:false}),
+    signal:AbortSignal.timeout(2000)});
+    setPill('','Not synced');
+  }catch(_){}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function setNPTitle(t){
+  var el=document.getElementById('np-title');
+  if(t&&t!=='Loading\u2026'){el.textContent=t;el.classList.remove('empty');}
+  else{el.textContent='Nothing loaded';el.classList.add('empty');}
+}
+function setPill(cls,text){
+  var el=document.getElementById('sync-pill');
+  el.className='pill'+(cls?' '+cls:'');el.textContent=text;
+}
+function fmt(s){
+  if(!s||isNaN(s)||s<0) return '0:00';
+  var m=Math.floor(s/60),ss=Math.floor(s%60);
+  return m+':'+String(ss).padStart(2,'0');
+}
+function esc(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+var _tt;
+function toast(msg,type){
+  var el=document.getElementById('toast');
+  el.textContent=msg;el.className='toast show'+(type?' '+type:'');
+  clearTimeout(_tt);_tt=setTimeout(function(){el.classList.remove('show');},2600);
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown',function(e){
+  if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if(e.code==='Space'){e.preventDefault();togglePlay();}
+  if(e.code==='ArrowLeft') skipRel(-10);
+  if(e.code==='ArrowRight') skipRel(10);
+  if(e.code==='ArrowUp'){var s=document.getElementById('vol-slider');s.value=Math.min(100,+s.value+10);setVol(s.value);}
+  if(e.code==='ArrowDown'){var s=document.getElementById('vol-slider');s.value=Math.max(0,+s.value-10);setVol(s.value);}
+  if(e.code==='KeyM') toggleMute();
+  if(e.code==='KeyN') nextTrack();
+  if(e.code==='KeyP') prevTrack();
+});
+
+// Boot
+document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
+(function(){var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);})();
+</script>
+</body>
+</html>
