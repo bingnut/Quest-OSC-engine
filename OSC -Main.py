@@ -80,7 +80,14 @@ song_state = {
     "playing": False,
 }
 
-# Config and presets are stored in-memory only (no files)
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+
+PRESETS_FILE = BASE_DIR / "presets.json"
+CONFIG_FILE  = BASE_DIR / "config.json"
+
 
 DEFAULT_CONFIG = {
     "ip":   "127.0.0.1",
@@ -1185,16 +1192,30 @@ class VRCChatbox(tk.Tk):
     # ── Config / Presets ──────────────────────
 
     def _load_config(self) -> dict:
-        return dict(DEFAULT_CONFIG)
+        if CONFIG_FILE.exists():
+            try:
+                return {**DEFAULT_CONFIG, **json.loads(CONFIG_FILE.read_text())}
+            except Exception:
+                pass
+        cfg = dict(DEFAULT_CONFIG)
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+        return cfg
 
     def _save_config(self):
-        pass  # in-memory only
+        CONFIG_FILE.write_text(json.dumps(self.config_data, indent=2))
 
     def _load_presets(self):
-        self.presets = []  # in-memory only
+        if PRESETS_FILE.exists():
+            try:
+                self.presets = json.loads(PRESETS_FILE.read_text())
+                return
+            except Exception:
+                pass
+        self.presets = []
+        PRESETS_FILE.write_text(json.dumps(self.presets, indent=2))
 
     def _save_presets_file(self):
-        pass  # in-memory only
+        PRESETS_FILE.write_text(json.dumps(self.presets, indent=2))
 
     # ── UI Build ──────────────────────────────
 
@@ -1286,7 +1307,7 @@ class VRCChatbox(tk.Tk):
         self._engine_tag_lbl.pack(anchor="w", padx=14, pady=(0, 4))
 
         # Version footer
-        tk.Label(self._sidebar, text="OSC Quest Engine v0.0.1 - YT build", bg=PANEL, fg=MUTED,
+        tk.Label(self._sidebar, text="OSC Quest Engine v1.0", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
     # ── Tab: Chatbox ──────────────────────────
