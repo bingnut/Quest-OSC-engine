@@ -518,9 +518,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
       <div class="player-wrap">
         <div class="placeholder" id="placeholder">
           <div class="placeholder-icon">&#9654;</div>
-          <div>Search for a video in the sidebar to begin</div>
+          <div>Search YouTube, or paste a YouTube/SoundCloud URL</div>
         </div>
         <div id="yt-player"></div>
+        <iframe id="sc-player" style="position:absolute;inset:0;width:100%;height:100%;border:none;display:none" allow="autoplay" scrolling="no"></iframe>
       </div>
       <div class="controls">
         <div class="np-row">
@@ -552,10 +553,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
     <!-- ── Search column ── -->
     <div class="col">
       <div class="col-head">
-        <div class="col-title">Search YouTube</div>
+        <div class="col-title">Search / Add URL</div>
         <div class="search-row">
           <input class="search-field" id="search-input" type="text"
-            placeholder="Song, artist, or paste URL..."
+            placeholder="Search, YT/SC URL, or playlist..."
             onkeydown="if(event.key==='Enter') handleInput()">
           <button class="search-btn" onclick="handleInput()">&#9654;</button>
         </div>
@@ -563,7 +564,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
       <div class="col-scroll" id="results-scroll">
         <div class="col-empty" id="results-empty">
           &#128269; Search above to find videos<br>
-          <span style="font-size:10px;opacity:.6">or paste a YouTube URL</span>
+          <span style="font-size:10px;opacity:.6">YouTube, SoundCloud, or playlists</span>
         </div>
         <div id="results-list"></div>
       </div>
@@ -597,26 +598,41 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 <script>
 // ── State ─────────────────────────────────────────────────────────────────
 var player=null, playerReady=false;
+var scWidget=null, scDuration=0, scElapsed=0, scPlaying=false;
 var queue=[], currentIdx=-1, muted=false;
 var lastPushed={}, syncTimer=null, progTimer=null;
 var SERVER = window.location.origin;
 
+// ── Poll Python desktop app for queued items ──────────────────────────────
+setInterval(function(){
+  fetch(SERVER+'/api/queue/poll')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      (d.items||[]).forEach(function(item){
+        _enqueue({
+          id:    item.url||item.id,
+          url:   item.url||item.id,
+          title: item.title||'Unknown',
+          artist:item.artist||'',
+          thumb: item.thumb||'',
+          source:item.source||'youtube'
+        }, false);
+      });
+    }).catch(function(){});
+}, 3000);
+
 // ── YouTube IFrame API ────────────────────────────────────────────────────
 window.onYouTubeIframeAPIReady = function(){
-  player = new YT.Player('yt-player', {
-    height:'100%', width:'100%',
+  player = new YT.Player('yt-player',{
+    height:'100%',width:'100%',
     playerVars:{autoplay:0,controls:1,rel:0,modestbranding:1,iv_load_policy:3},
     events:{onReady:onPlayerReady,onStateChange:onPlayerState,onError:onPlayerError}
   });
 };
-
 function onPlayerReady(){
   playerReady=true;
   player.setVolume(parseInt(document.getElementById('vol-slider').value,10));
-  startProgTimer();
-  startSyncTimer();
 }
-
 function onPlayerState(e){
   var playing=e.data===YT.PlayerState.PLAYING;
   document.getElementById('play-btn').textContent=playing?'\u23F8 Pause':'\u25B6 Play';
@@ -624,32 +640,72 @@ function onPlayerState(e){
   lastPushed={};pushSync();
   if(e.data===YT.PlayerState.ENDED) nextTrack();
 }
-
 function onPlayerError(e){
   var m={2:'Invalid ID',5:'HTML5 error',100:'Not found',101:'Embeds disabled',150:'Embeds disabled'};
   toast('\u26A0 '+(m[e.data]||'Error '+e.data),'err');
 }
 
-// ── Input: URL or search ──────────────────────────────────────────────────
+// ── Input handler ─────────────────────────────────────────────────────────
 function handleInput(){
   var raw=document.getElementById('search-input').value.trim();
   if(!raw) return;
+
+  // SoundCloud
+  if(raw.indexOf('soundcloud.com')>=0){
+    resolveAndQueue(raw);
+    document.getElementById('search-input').value='';
+    return;
+  }
+
+  // YouTube playlist
+  if((raw.indexOf('youtube.com')>=0||raw.indexOf('youtu.be')>=0) && raw.indexOf('list=')>=0){
+    resolveAndQueue(raw);
+    document.getElementById('search-input').value='';
+    return;
+  }
+
+  // YouTube single video
   var id=extractId(raw);
   if(id){
-    // Direct URL
-    var item={id:id,title:'Loading\u2026',duration:'',channel:'',
-              thumb:'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg'};
-    addToQueue(item);
+    var item={id:id,url:'https://www.youtube.com/watch?v='+id,
+      title:'Loading\u2026',artist:'',thumb:'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg',
+      source:'youtube'};
+    _enqueue(item);
     document.getElementById('search-input').value='';
     fetch('https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v='+id+'&format=json')
       .then(function(r){return r.ok?r.json():Promise.reject()})
       .then(function(d){
         var q=queue.find(function(x){return x.id===id});
-        if(q){q.title=d.title||q.title;renderQueue();}
+        if(q){q.title=d.title||q.title;q.artist=d.author_name||'';renderQueue();}
       }).catch(function(){});
-  } else {
-    doSearch(raw);
+    return;
   }
+
+  // Search
+  doSearch(raw);
+}
+
+// ── Resolve via server (playlists, SoundCloud) ────────────────────────────
+function resolveAndQueue(url){
+  toast('Resolving\u2026');
+  fetch(SERVER+'/api/resolve?url='+encodeURIComponent(url))
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var items=d.items||[];
+      if(!items.length){toast('\u2715 Could not resolve URL','err');return;}
+      items.forEach(function(item){
+        _enqueue({
+          id:    item.url||item.id,
+          url:   item.url||item.id,
+          title: item.title||'Unknown',
+          artist:item.artist||'',
+          thumb: item.thumb||'',
+          source:item.source||'youtube'
+        });
+      });
+      toast('\u2713 '+items.length+' item'+(items.length>1?'s':'')+' added','ok');
+    })
+    .catch(function(e){toast('\u2715 Resolve failed','err');});
 }
 
 function extractId(raw){
@@ -663,67 +719,134 @@ function extractId(raw){
 }
 
 // ── Search ────────────────────────────────────────────────────────────────
+var _searchQuery='', _searchContinuation='', _searchLoading=false;
+
 function doSearch(query){
+  _searchQuery=query;_searchContinuation='';_searchLoading=false;
   document.getElementById('results-empty').style.display='none';
   document.getElementById('results-list').innerHTML=
     '<div class="spinner"><div class="spin"></div><br>Searching\u2026</div>';
-  fetch(SERVER+'/api/search?q='+encodeURIComponent(query))
+  loadMoreResults(true);
+}
+
+function loadMoreResults(fresh){
+  if(_searchLoading) return;
+  if(!fresh&&!_searchContinuation) return;
+  _searchLoading=true;
+  var url=SERVER+'/api/search?q='+encodeURIComponent(_searchQuery);
+  if(!fresh&&_searchContinuation) url+='&continuation='+encodeURIComponent(_searchContinuation);
+  fetch(url)
     .then(function(r){return r.json()})
-    .then(function(d){renderResults(d.results||[])})
+    .then(function(d){
+      _searchContinuation=d.continuation||'';
+      _searchLoading=false;
+      appendResults(d.results||[],fresh);
+    })
     .catch(function(){
-      document.getElementById('results-list').innerHTML=
+      _searchLoading=false;
+      if(fresh) document.getElementById('results-list').innerHTML=
         '<div class="col-empty" style="color:var(--err)">\u2715 Search failed.<br>Is the server running?</div>';
     });
 }
 
-function renderResults(results){
+function appendResults(results,fresh){
   var el=document.getElementById('results-list');
-  if(!results.length){
-    el.innerHTML='<div class="col-empty">No results found</div>';
-    return;
+  if(fresh){
+    if(!results.length){el.innerHTML='<div class="col-empty">No results found</div>';return;}
+    el.innerHTML='';
   }
-  el.innerHTML=results.map(function(r){
-    // Encode for onclick attribute
-    var safe=JSON.stringify(r).replace(/'/g,"&#39;");
-    return '<div class="r-card" onclick=\'addResult('+safe+')\'>'
-      +'<div class="r-thumb-wrap">'
-        +'<img src="'+r.thumb+'" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
-        +(r.duration?'<div class="r-dur">'+esc(r.duration)+'</div>':'')
+  results.forEach(function(r){
+    r.artist=r.artist||r.channel||'';
+    var card=document.createElement('div');
+    card.className='r-card';
+    card.onclick=function(){addResult(r)};
+    card.innerHTML=
+      '<div class="r-thumb-wrap">'
+      +'<img src="'+r.thumb+'" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+      +(r.duration?'<div class="r-dur">'+esc(r.duration)+'</div>':'')
       +'</div>'
       +'<div class="r-body">'
         +'<div class="r-title">'+esc(r.title)+'</div>'
         +'<div class="r-meta-row">'
-          +'<div class="r-channel">'+esc(r.channel||'')+'</div>'
-          +'<button class="r-add-btn" onclick="event.stopPropagation();addResult('+safe+')">+ Add</button>'
+          +'<div class="r-channel">'+esc(r.artist)+'</div>'
+          +'<button class="r-add-btn" onclick="event.stopPropagation();addResult('+JSON.stringify(r).replace(/'/g,"&#39;")+')" >+ Add</button>'
         +'</div>'
-      +'</div>'
       +'</div>';
-  }).join('');
+    el.appendChild(card);
+  });
 }
 
 function addResult(r){
-  addToQueue(r);
+  _enqueue({id:r.id,url:'https://www.youtube.com/watch?v='+r.id,
+    title:r.title,artist:r.artist||r.channel||'',
+    thumb:r.thumb,source:'youtube'});
   toast('\u2713 '+r.title.slice(0,28)+'\u2026 added','ok');
 }
 
+document.getElementById('results-scroll').addEventListener('scroll',function(){
+  var el=this;
+  if(el.scrollTop+el.clientHeight>=el.scrollHeight-120) loadMoreResults(false);
+});
+
 // ── Queue ─────────────────────────────────────────────────────────────────
-function addToQueue(item){
-  if(queue.some(function(q){return q.id===item.id})){toast('Already in queue');return;}
+function _enqueue(item, skipDup){
+  var key=item.url||item.id;
+  if(skipDup!==false && queue.some(function(q){return (q.url||q.id)===key})){return;}
   queue.push(item);
   renderQueue();
+  updateQueueCount();
   if(currentIdx===-1) playAt(queue.length-1);
 }
 
+function addToQueue(item){ _enqueue(item); }
+
 function playAt(idx){
-  if(!playerReady||idx<0||idx>=queue.length) return;
+  if(idx<0||idx>=queue.length) return;
   currentIdx=idx;
   var item=queue[idx];
   document.getElementById('placeholder').style.display='none';
-  player.loadVideoById(item.id);
-  setNPTitle(item.title);
+  var displayTitle=item.title+(item.artist?' \u2014 '+item.artist:'');
+  setNPTitle(displayTitle);
   renderQueue();
   updateQueueCount();
   lastPushed={};
+
+  if(item.source==='soundcloud'){
+    // Hide YT, show SC
+    document.getElementById('yt-player').style.display='none';
+    var scEl=document.getElementById('sc-player');
+    scEl.style.display='block';
+    scEl.src='https://w.soundcloud.com/player/?url='+encodeURIComponent(item.url||item.id)
+      +'&auto_play=true&hide_related=true&show_comments=false&visual=true&color=%237c6aff';
+    scWidget=null; scElapsed=0; scDuration=0; scPlaying=false;
+    // Bind SC widget events after iframe loads
+    scEl.onload=function(){
+      if(!window.SC) return;
+      scWidget=SC.Widget(scEl);
+      scWidget.bind(SC.Widget.Events.READY,function(){
+        scWidget.bind(SC.Widget.Events.PLAY_PROGRESS,function(e){
+          scElapsed=Math.floor((e.currentPosition||0)/1000);
+          scWidget.getDuration(function(d){scDuration=Math.floor(d/1000);});
+          scPlaying=true;
+          document.getElementById('live-dot').classList.add('on');
+          document.getElementById('play-btn').textContent='\u23F8 Pause';
+        });
+        scWidget.bind(SC.Widget.Events.PAUSE,function(){
+          scPlaying=false;
+          document.getElementById('live-dot').classList.remove('on');
+          document.getElementById('play-btn').textContent='\u25B6 Play';
+        });
+        scWidget.bind(SC.Widget.Events.FINISH,function(){nextTrack();});
+      });
+    };
+  } else {
+    // Hide SC, show YT
+    document.getElementById('sc-player').style.display='none';
+    document.getElementById('sc-player').src='';
+    document.getElementById('yt-player').style.display='block';
+    scPlaying=false; scWidget=null;
+    if(playerReady) player.loadVideoById(item.id);
+  }
 }
 
 function prevTrack(){if(currentIdx>0) playAt(currentIdx-1);}
@@ -741,8 +864,7 @@ function removeFromQueue(idx,e){
     if(queue.length) playAt(Math.min(idx,queue.length-1));
     else stopAll();
   } else if(idx<currentIdx) currentIdx--;
-  renderQueue();
-  updateQueueCount();
+  renderQueue(); updateQueueCount();
 }
 
 function clearQueue(){queue=[];currentIdx=-1;stopAll();renderQueue();updateQueueCount();}
@@ -750,23 +872,24 @@ function clearQueue(){queue=[];currentIdx=-1;stopAll();renderQueue();updateQueue
 function renderQueue(){
   var el=document.getElementById('queue-list');
   if(!queue.length){
-    el.innerHTML='<div class="col-empty">&#127911; Add videos from search<br><span style="font-size:10px;opacity:.6">They\'ll play in order</span></div>';
+    el.innerHTML='<div class="col-empty">&#127911; Add videos from search<br>'
+      +'<span style="font-size:10px;opacity:.6">They\'ll play in order</span></div>';
     return;
   }
   el.innerHTML=queue.map(function(item,i){
+    var icon=item.source==='soundcloud'?'&#127925;':'&#9654;';
     return '<div class="q-card'+(i===currentIdx?' current':'')+'" onclick="playAt('+i+')">'
       +'<div class="q-num">'+(i===currentIdx?'&#9654;':(i+1))+'</div>'
       +'<div class="q-thumb-sm">'
-        +(item.thumb?'<img src="'+item.thumb+'" alt="" onerror="this.style.display=\'none\'">':'&#9654;')
+        +(item.thumb?'<img src="'+item.thumb+'" alt="" onerror="this.style.display=\'none\'">':icon)
       +'</div>'
       +'<div class="q-info">'
         +'<div class="q-title-sm">'+esc(item.title)+'</div>'
-        +'<div class="q-meta-sm">'+(item.duration||item.channel||'&nbsp;')+'</div>'
+        +'<div class="q-meta-sm">'+(item.artist||'&nbsp;')+'</div>'
       +'</div>'
       +'<button class="q-rm" onclick="removeFromQueue('+i+',event)" title="Remove">&#x2715;</button>'
       +'</div>';
   }).join('');
-  // Auto-scroll current item into view
   if(currentIdx>=0){
     var card=el.querySelectorAll('.q-card')[currentIdx];
     if(card) card.scrollIntoView({block:'nearest',behavior:'smooth'});
@@ -780,12 +903,19 @@ function updateQueueCount(){
 
 // ── Player controls ───────────────────────────────────────────────────────
 function togglePlay(){
+  var item=queue[currentIdx];
+  if(item&&item.source==='soundcloud'){if(scWidget) scWidget.toggle();return;}
   if(!playerReady) return;
   if(player.getPlayerState()===YT.PlayerState.PLAYING) player.pauseVideo();
   else player.playVideo();
 }
 
 function skipRel(d){
+  var item=queue[currentIdx];
+  if(item&&item.source==='soundcloud'){
+    if(scWidget) scWidget.seekTo((scElapsed+d)*1000);
+    return;
+  }
   if(!playerReady) return;
   player.seekTo(Math.max(0,player.getCurrentTime()+d),true);
   lastPushed={};
@@ -793,7 +923,11 @@ function skipRel(d){
 
 function stopAll(){
   if(playerReady) player.stopVideo();
-  currentIdx=-1;
+  if(scWidget){scWidget.pause();scWidget=null;}
+  document.getElementById('sc-player').src='';
+  document.getElementById('sc-player').style.display='none';
+  document.getElementById('yt-player').style.display='block';
+  currentIdx=-1;scPlaying=false;
   document.getElementById('play-btn').textContent='\u25B6 Play';
   document.getElementById('live-dot').classList.remove('on');
   setNPTitle('');
@@ -812,31 +946,46 @@ function setVol(v){
 }
 
 function toggleMute(){
-  if(!playerReady) return;
+  var item=queue[currentIdx];
   muted=!muted;
-  if(muted){player.mute();document.getElementById('vol-icon').textContent='\uD83D\uDD07';}
-  else{player.unMute();var v=document.getElementById('vol-slider').value;
-    document.getElementById('vol-icon').textContent=v<50?'\uD83D\uDD09':'\uD83D\uDD0A';}
+  if(item&&item.source==='soundcloud'){
+    if(scWidget) scWidget.setVolume(muted?0:100);
+  } else {
+    if(!playerReady) return;
+    if(muted) player.mute();
+    else player.unMute();
+  }
+  var v=document.getElementById('vol-slider').value;
+  document.getElementById('vol-icon').textContent=muted?'\uD83D\uDD07':v<50?'\uD83D\uDD09':'\uD83D\uDD0A';
 }
 
 document.getElementById('prog-track').addEventListener('click',function(e){
-  if(!playerReady) return;
   var rect=this.getBoundingClientRect();
   var pct=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
-  player.seekTo(pct*(player.getDuration()||0),true);lastPushed={};
+  var item=queue[currentIdx];
+  if(item&&item.source==='soundcloud'){
+    if(scWidget&&scDuration) scWidget.seekTo(pct*scDuration*1000);
+    return;
+  }
+  if(!playerReady) return;
+  player.seekTo(pct*(player.getDuration()||0),true);
+  lastPushed={};
 });
 
 // ── Progress timer ────────────────────────────────────────────────────────
 function startProgTimer(){
   if(progTimer) clearInterval(progTimer);
   progTimer=setInterval(function(){
-    if(!playerReady) return;
-    var el=player.getCurrentTime()||0, dur=player.getDuration()||0;
+    var item=queue[currentIdx];
+    var el,dur;
+    if(item&&item.source==='soundcloud'){
+      el=scElapsed; dur=scDuration;
+    } else {
+      if(!playerReady) return;
+      el=player.getCurrentTime()||0; dur=player.getDuration()||0;
+    }
     document.getElementById('prog-fill').style.width=(dur>0?(el/dur*100):0)+'%';
     document.getElementById('prog-time').textContent=fmt(el)+' / '+fmt(dur);
-    if(currentIdx>=0&&dur>0&&queue[currentIdx]&&!queue[currentIdx]._ds){
-      queue[currentIdx].duration=fmt(dur);queue[currentIdx]._ds=true;renderQueue();
-    }
   },500);
 }
 
@@ -847,12 +996,20 @@ function startSyncTimer(){
 }
 
 async function pushSync(){
-  if(!playerReady) return;
-  var playing=player.getPlayerState()===YT.PlayerState.PLAYING;
-  var elapsed=Math.floor(player.getCurrentTime()||0);
-  var dur=Math.floor(player.getDuration()||0);
   var item=queue[currentIdx];
-  var title=item?item.title:'', url=item?'https://www.youtube.com/watch?v='+item.id:'';
+  var playing,elapsed,dur,title,url;
+  if(item&&item.source==='soundcloud'){
+    playing=scPlaying; elapsed=scElapsed; dur=scDuration;
+    title=item.title+(item.artist?' \u2014 '+item.artist:'');
+    url=item.url||item.id;
+  } else {
+    if(!playerReady) return;
+    playing=player.getPlayerState()===YT.PlayerState.PLAYING;
+    elapsed=Math.floor(player.getCurrentTime()||0);
+    dur=Math.floor(player.getDuration()||0);
+    title=item?(item.title+(item.artist?' \u2014 '+item.artist:'')):'';
+    url=item?('https://www.youtube.com/watch?v='+item.id):'';
+  }
   if(lastPushed.title===title&&lastPushed.playing===playing&&
      Math.abs((lastPushed.elapsed||0)-elapsed)<3) return;
   lastPushed={title,playing,elapsed};
@@ -879,7 +1036,7 @@ async function pushStop(){
 // ── Helpers ───────────────────────────────────────────────────────────────
 function setNPTitle(t){
   var el=document.getElementById('np-title');
-  if(t&&t!=='Loading\u2026'){el.textContent=t;el.classList.remove('empty');}
+  if(t){el.textContent=t;el.classList.remove('empty');}
   else{el.textContent='Nothing loaded';el.classList.add('empty');}
 }
 function setPill(cls,text){
@@ -892,7 +1049,7 @@ function fmt(s){
   return m+':'+String(ss).padStart(2,'0');
 }
 function esc(s){
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 var _tt;
@@ -902,7 +1059,6 @@ function toast(msg,type){
   clearTimeout(_tt);_tt=setTimeout(function(){el.classList.remove('show');},2600);
 }
 
-// Keyboard shortcuts
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
   if(e.code==='Space'){e.preventDefault();togglePlay();}
@@ -915,9 +1071,13 @@ document.addEventListener('keydown',function(e){
   if(e.code==='KeyP') prevTrack();
 });
 
-// Boot
 document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
-(function(){var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);})();
+startProgTimer();
+startSyncTimer();
+(function(){
+  var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);
+  var s=document.createElement('script');s.src='https://w.soundcloud.com/player/api.js';document.head.appendChild(s);
+})();
 </script>
 </body>
 </html>"""
@@ -1103,6 +1263,8 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._json({"items": items})
         elif self.path.startswith("/api/search"):
             self._handle_search()
+        elif self.path.startswith("/api/resolve"):
+            self._handle_resolve()
         elif self.path in ("/", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1126,6 +1288,19 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _pending_queue.extend(items)
                 threading.Thread(target=_resolve, daemon=True).start()
             self._json({"ok": True})
+
+    def _handle_resolve(self):
+        try:
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            url = params.get("url", [""])[0].strip()
+            if not url:
+                self._json({"items": [], "error": "No URL"})
+                return
+            items = resolve_media_url(url)
+            self._json({"items": items})
+        except Exception as e:
+            self._json({"items": [], "error": str(e)})
 
     def _handle_search(self):
         try:
