@@ -792,96 +792,166 @@ document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_v
 
 
 
-def youtube_search(query: str, max_results: int = 10) -> list:
-    """Scrape YouTube search results without an API key."""
-    try:
-        q   = urllib.parse.quote_plus(query)
-        url = f"https://www.youtube.com/results?search_query={q}"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
+def _extract_videos(items):
+    results = []
+    for item in items:
+        v = item.get("videoRenderer")
+        if not v:
+            continue
+        video_id = v.get("videoId", "")
+        if not video_id:
+            continue
+        title = ""
+        try: title = v["title"]["runs"][0]["text"]
+        except Exception: pass
+        duration_str = ""
+        try: duration_str = v["lengthText"]["simpleText"]
+        except Exception: pass
+        channel = ""
+        try: channel = v["ownerText"]["runs"][0]["text"]
+        except Exception: pass
+        views = ""
+        try: views = v["viewCountText"]["simpleText"]
+        except Exception: pass
+        results.append({
+            "id":       video_id,
+            "title":    title,
+            "duration": duration_str,
+            "channel":  channel,
+            "views":    views,
+            "thumb":    f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
         })
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+    return results
 
-        # YouTube embeds initial data as a JS variable
-        marker = "var ytInitialData = "
-        idx = html.find(marker)
-        if idx == -1:
-            return []
-        start = idx + len(marker)
-        # Find the end of the JSON object by counting braces
-        depth = 0
-        end = start
-        for i, ch in enumerate(html[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        data = json.loads(html[start:end])
 
-        results = []
-        try:
-            contents = (
-                data["contents"]["twoColumnSearchResultsRenderer"]
-                    ["primaryContents"]["sectionListRenderer"]
-                    ["contents"][0]["itemSectionRenderer"]["contents"]
-            )
-        except (KeyError, IndexError):
-            return []
+def _extract_continuation(data):
+    try:
+        sections = (data["contents"]["twoColumnSearchResultsRenderer"]
+                       ["primaryContents"]["sectionListRenderer"]["contents"])
+        for section in sections:
+            cr = section.get("continuationItemRenderer", {})
+            token = (cr.get("continuationEndpoint", {})
+                       .get("continuationCommand", {})
+                       .get("token", ""))
+            if token:
+                return token
+    except Exception:
+        pass
+    return ""
 
-        for item in contents:
-            v = item.get("videoRenderer")
-            if not v:
-                continue
-            video_id = v.get("videoId", "")
-            if not video_id:
-                continue
-            # Title
-            title = ""
-            try:
-                title = v["title"]["runs"][0]["text"]
-            except Exception:
-                pass
-            # Duration
-            duration_str = ""
-            try:
-                duration_str = v["lengthText"]["simpleText"]
-            except Exception:
-                pass
-            # Channel
-            channel = ""
-            try:
-                channel = v["ownerText"]["runs"][0]["text"]
-            except Exception:
-                pass
-            # View count
-            views = ""
-            try:
-                views = v["viewCountText"]["simpleText"]
-            except Exception:
-                pass
 
-            results.append({
-                "id":       video_id,
-                "title":    title,
-                "duration": duration_str,
-                "channel":  channel,
-                "views":    views,
-                "thumb":    f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
-            })
-            if len(results) >= max_results:
+def _parse_ytInitialData(html):
+    marker = "var ytInitialData = "
+    idx = html.find(marker)
+    if idx == -1:
+        return None
+    start = idx + len(marker)
+    depth = 0
+    end = start
+    for i, ch in enumerate(html[start:], start):
+        if ch == "{": depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
                 break
+    try:
+        return json.loads(html[start:end])
+    except Exception:
+        return None
 
-        return results
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def youtube_search(query: str, continuation: str = "") -> dict:
+    """Return {results, continuation} — continuation token enables load-more."""
+    try:
+        if continuation:
+            api_url = "https://www.youtube.com/youtubei/v1/search"
+            payload = json.dumps({
+                "continuation": continuation,
+                "context": {
+                    "client": {
+                        "clientName": "WEB",
+                        "clientVersion": "2.20231121.09.00",
+                    }
+                }
+            }).encode()
+            req = urllib.request.Request(api_url, data=payload, headers={
+                **HEADERS,
+                "Content-Type": "application/json",
+                "X-YouTube-Client-Name": "1",
+                "X-YouTube-Client-Version": "2.20231121.09.00",
+            })
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+
+            results = []
+            try:
+                items = (data["onResponseReceivedCommands"][0]
+                            ["appendContinuationItemsAction"]
+                            ["continuationItems"])
+                for item in items:
+                    results.extend(_extract_videos(
+                        item.get("itemSectionRenderer", {}).get("contents", [])
+                    ))
+            except Exception:
+                pass
+
+            next_token = ""
+            try:
+                items = (data["onResponseReceivedCommands"][0]
+                            ["appendContinuationItemsAction"]
+                            ["continuationItems"])
+                for item in items:
+                    cr = item.get("continuationItemRenderer", {})
+                    t = (cr.get("continuationEndpoint", {})
+                           .get("continuationCommand", {})
+                           .get("token", ""))
+                    if t:
+                        next_token = t
+                        break
+            except Exception:
+                pass
+
+            return {"results": results, "continuation": next_token}
+
+        else:
+            q = urllib.parse.quote_plus(query)
+            url = f"https://www.youtube.com/results?search_query={q}"
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+
+            data = _parse_ytInitialData(html)
+            if not data:
+                return {"results": [], "continuation": ""}
+
+            try:
+                contents = (
+                    data["contents"]["twoColumnSearchResultsRenderer"]
+                        ["primaryContents"]["sectionListRenderer"]["contents"]
+                )
+            except (KeyError, IndexError):
+                return {"results": [], "continuation": ""}
+
+            results = []
+            for section in contents:
+                results.extend(_extract_videos(
+                    section.get("itemSectionRenderer", {}).get("contents", [])
+                ))
+
+            return {"results": results, "continuation": _extract_continuation(data)}
+
     except Exception as e:
         print(f"[Search] Error: {e}")
-        return []
+        return {"results": [], "continuation": ""}
 
 
 class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
@@ -917,12 +987,13 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         try:
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
-            query  = params.get("q", [""])[0].strip()
-            if not query:
+            query        = params.get("q", [""])[0].strip()
+            continuation = params.get("continuation", [""])[0].strip()
+            if not query and not continuation:
                 self._json({"results": [], "error": "No query"})
                 return
-            results = youtube_search(query)
-            self._json({"results": results})
+            data = youtube_search(query, continuation)
+            self._json(data)
         except Exception as e:
             self._json({"results": [], "error": str(e)})
 
@@ -1224,8 +1295,12 @@ class VRCChatbox(tk.Tk):
         titlebar = tk.Frame(self, bg=PANEL, height=52)
         titlebar.pack(fill="x", side="top")
         titlebar.pack_propagate(False)
-        tk.Label(titlebar, text="◈  OSC Quest Engine", bg=PANEL, fg=TEXT,
-                 font=FONT_TITLE).pack(side="left", padx=20)
+        title_frame = tk.Frame(titlebar, bg=PANEL)
+        title_frame.pack(side="left", padx=20)
+        tk.Label(title_frame, text="◈  OSC Quest Engine", bg=PANEL, fg=TEXT,
+                 font=FONT_TITLE).pack(anchor="w")
+        tk.Label(title_frame, text="By -service-", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w")
         self._status_dot = tk.Label(titlebar, text="●", bg=PANEL, fg=MUTED,
                                     font=("Segoe UI", 18))
         self._status_dot.pack(side="right", padx=(0, 8))
