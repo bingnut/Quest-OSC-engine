@@ -68,6 +68,38 @@ def send_osc(ip: str, port: int, address: str, *args):
         s.sendto(msg, (ip, port))
 
 
+def parse_osc_message(data: bytes):
+    try:
+        addr_end = data.index(b'\x00')
+        address = data[:addr_end].decode('utf-8', errors='replace')
+        addr_padded = addr_end + 1 + _pad4(addr_end + 1)
+        rest = data[addr_padded:]
+        if not rest or rest[0:1] != b',':
+            return address, []
+        tag_end = rest.index(b'\x00')
+        type_tags = rest[1:tag_end].decode('utf-8', errors='replace')
+        tag_padded = tag_end + 1 + _pad4(tag_end + 1)
+        rest = rest[tag_padded:]
+        args = []
+        for tag in type_tags:
+            if tag == 'i':
+                args.append(struct.unpack('>i', rest[:4])[0]); rest = rest[4:]
+            elif tag == 'f':
+                args.append(round(struct.unpack('>f', rest[:4])[0], 4)); rest = rest[4:]
+            elif tag == 's':
+                s_end = rest.index(b'\x00')
+                args.append(rest[:s_end].decode('utf-8', errors='replace'))
+                s_padded = s_end + 1 + _pad4(s_end + 1)
+                rest = rest[s_padded:]
+            elif tag == 'T':
+                args.append(True)
+            elif tag == 'F':
+                args.append(False)
+        return address, args
+    except Exception:
+        return None, []
+
+
 # ─────────────────────────────────────────────
 #  Song State (shared with HTTP server)
 # ─────────────────────────────────────────────
@@ -1235,6 +1267,7 @@ class VRCChatbox(tk.Tk):
         self._send_loop_active = False
         self._send_interval = 5
         self._http_running = False
+        self._osc_listener_running = False
 
         style = ttk.Style(self)
         style.theme_use("clam")
@@ -1307,6 +1340,10 @@ class VRCChatbox(tk.Tk):
         self._status_lbl = tk.Label(titlebar, text="Idle", bg=PANEL, fg=MUTED,
                                     font=FONT_SMALL)
         self._status_lbl.pack(side="right")
+        tk.Button(titlebar, text="↺ Restart", bg=CARD, fg=MUTED,
+                  relief="flat", font=FONT_SMALL, cursor="hand2",
+                  activebackground=HOVER, padx=10, pady=4,
+                  command=self._restart).pack(side="right", padx=(0, 12))
         Separator(self).pack(fill="x")
 
         # Body
@@ -1331,6 +1368,7 @@ class VRCChatbox(tk.Tk):
         self._build_tab_macros()
         self._build_tab_song()
         self._build_tab_ports()
+        self._build_tab_output()
 
     def _build_sidebar(self):
         tk.Label(self._sidebar, text="NAVIGATION", bg=PANEL, fg=MUTED,
@@ -1342,6 +1380,7 @@ class VRCChatbox(tk.Tk):
             ("macros",   "Macros",   "⚡"),
             ("song",     "Song Sync","🎵"),
             ("ports",    "Ports",    "🔌"),
+            ("output",   "Output",   "📡"),
         ]
         for key, label, icon in nav_items:
             btn = SidebarButton(self._sidebar, label, icon,
@@ -1669,6 +1708,22 @@ class VRCChatbox(tk.Tk):
         self._http_port_var = tk.StringVar(value=str(self.config_data["http_port"]))
         StyledEntry(r3, textvariable=self._http_port_var, width=10).pack(side="left")
 
+        # OSC Receive
+        recv_card = section("OSC Receive (from VRChat)", "VRChat sends on port 9001 by default")
+        r4 = tk.Frame(recv_card, bg=CARD, pady=8); r4.pack(fill="x")
+        tk.Label(r4, text="Listen Port:", bg=CARD, fg=MUTED, font=FONT_SMALL,
+                 width=14, anchor="w").pack(side="left")
+        self._recv_port_var = tk.StringVar(value="9001")
+        StyledEntry(r4, textvariable=self._recv_port_var, width=10).pack(side="left")
+        r4b = tk.Frame(recv_card, bg=CARD, pady=6); r4b.pack(fill="x")
+        self._recv_toggle_btn = tk.Button(
+            r4b, text="▶  Start Listening", bg=SUCCESS, fg="#fff",
+            relief="flat", font=FONT_SMALL, cursor="hand2",
+            padx=12, pady=5, command=self._toggle_osc_listener)
+        self._recv_toggle_btn.pack(side="left")
+        self._recv_status = tk.Label(r4b, text="Not listening", bg=CARD, fg=MUTED, font=FONT_SMALL)
+        self._recv_status.pack(side="left", padx=10)
+
         # Test + Save
         act = tk.Frame(f, bg=DARK, padx=28, pady=12)
         act.pack(fill="x")
@@ -1692,6 +1747,99 @@ class VRCChatbox(tk.Tk):
                  font=FONT_MONO).pack(anchor="w", pady=2)
         tk.Label(info, text="Set VRChat OSC Receive Port to 9000 in VRC settings.",
                  bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
+
+    def _build_tab_output(self):
+        f = tk.Frame(self._content, bg=DARK)
+        self._tabs["output"] = f
+
+        hdr = tk.Frame(f, bg=DARK, pady=20)
+        hdr.pack(fill="x", padx=28)
+        tk.Label(hdr, text="OSC Output", bg=DARK, fg=TEXT,
+                 font=FONT_HUGE).pack(side="left")
+        tk.Button(hdr, text="🗑 Clear", bg=CARD, fg=MUTED,
+                  relief="flat", font=FONT_SMALL, cursor="hand2",
+                  activebackground=HOVER, padx=10, pady=4,
+                  command=self._clear_output).pack(side="right")
+
+        log_frame = tk.Frame(f, bg=CARD, highlightthickness=1,
+                             highlightbackground=BORDER)
+        log_frame.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        self._output_text = tk.Text(
+            log_frame, bg=CARD, fg=TEXT, font=FONT_MONO,
+            relief="flat", state="disabled", wrap="word",
+            selectbackground=ACCENT, padx=12, pady=10)
+        self._output_text.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(log_frame, command=self._output_text.yview)
+        sb.pack(side="right", fill="y")
+        self._output_text.config(yscrollcommand=sb.set)
+        self._output_text.tag_configure("addr", foreground=ACCENT, font=FONT_BOLD)
+        self._output_text.tag_configure("val",  foreground=ACCENT2)
+        self._output_text.tag_configure("time", foreground=MUTED, font=FONT_SMALL)
+
+    def _clear_output(self):
+        self._output_text.config(state="normal")
+        self._output_text.delete("1.0", tk.END)
+        self._output_text.config(state="disabled")
+
+    def _append_output(self, address: str, args: list):
+        def _do():
+            self._output_text.config(state="normal")
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            self._output_text.insert(tk.END, f"[{ts}]  ", "time")
+            self._output_text.insert(tk.END, address, "addr")
+            if args:
+                self._output_text.insert(tk.END,
+                    "  →  " + "  ".join(str(a) for a in args), "val")
+            self._output_text.insert(tk.END, "\n")
+            self._output_text.see(tk.END)
+            self._output_text.config(state="disabled")
+        self.after(0, _do)
+
+    def _toggle_osc_listener(self):
+        if self._osc_listener_running:
+            self._osc_listener_running = False
+            self._recv_toggle_btn.config(text="▶  Start Listening", bg=SUCCESS)
+            self._recv_status.config(text="Not listening", fg=MUTED)
+        else:
+            try:
+                port = int(self._recv_port_var.get().strip())
+            except ValueError:
+                port = 9001
+            self._osc_listener_running = True
+            self._recv_toggle_btn.config(text="⏹  Stop Listening", bg=ERR)
+            self._recv_status.config(text=f"Listening on :{port}…", fg=SUCCESS)
+            threading.Thread(target=self._osc_listener_worker,
+                             args=(port,), daemon=True).start()
+
+    def _osc_listener_worker(self, port: int):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", port))
+            sock.settimeout(0.5)
+        except Exception as e:
+            self.after(0, lambda: self._recv_status.config(
+                text=f"Error: {e}", fg=ERR))
+            self._osc_listener_running = False
+            self.after(0, lambda: self._recv_toggle_btn.config(
+                text="▶  Start Listening", bg=SUCCESS))
+            return
+        while self._osc_listener_running:
+            try:
+                data, _ = sock.recvfrom(4096)
+                address, args = parse_osc_message(data)
+                if address:
+                    self._append_output(address, args)
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+        sock.close()
+
+    def _restart(self):
+        self.destroy()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     # ── Tab Navigation ────────────────────────
 
