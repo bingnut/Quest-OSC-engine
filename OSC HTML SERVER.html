@@ -205,6 +205,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
           <div>Search for a video in the sidebar to begin</div>
         </div>
         <div id="yt-player"></div>
+        <iframe id="sc-player" style="position:absolute;inset:0;width:100%;height:100%;border:none;display:none" allow="autoplay" scrolling="no"></iframe>
       </div>
       <div class="controls">
         <div class="np-row">
@@ -284,6 +285,19 @@ var player=null, playerReady=false;
 var queue=[], currentIdx=-1, muted=false;
 var lastPushed={}, syncTimer=null, progTimer=null;
 var SERVER = window.location.origin;
+var scWidget=null, scDuration=0, scElapsed=0, scPlaying=false;
+
+setInterval(function(){
+  fetch(SERVER+'/api/queue/poll')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      (d.items||[]).forEach(function(item){
+        addToQueue({id:item.url||item.id,title:item.title||item.id,
+          artist:item.artist||'',thumb:item.thumb||'',
+          source:item.source||'youtube',url:item.url||''});
+      });
+    }).catch(function(){});
+}, 3000);
 
 // ── YouTube IFrame API ────────────────────────────────────────────────────
 window.onYouTubeIframeAPIReady = function(){
@@ -319,17 +333,27 @@ function handleInput(){
   var raw=document.getElementById('search-input').value.trim();
   if(!raw) return;
   var id=extractId(raw);
-  if(id){
-    // Direct URL
-    var item={id:id,title:'Loading\u2026',duration:'',channel:'',
-              thumb:'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg'};
-    addToQueue(item);
+  if(raw.indexOf('soundcloud.com')>=0){
+    var sc_item={id:raw,url:raw,title:'Loading…',artist:'',thumb:'',source:'soundcloud'};
+    addToQueue(sc_item);
+    document.getElementById('search-input').value='';
+    fetch('https://soundcloud.com/oembed?url='+encodeURIComponent(raw)+'&format=json')
+      .then(function(r){return r.ok?r.json():Promise.reject()})
+      .then(function(d){
+        var q=queue.find(function(x){return x.url===raw||x.id===raw});
+        if(q){q.title=d.title||q.title;q.artist=d.author_name||'';q.thumb=d.thumbnail_url||'';renderQueue();}
+      }).catch(function(){});
+  } else if(id){
+    var yt_item={id:id,url:'https://www.youtube.com/watch?v='+id,
+      title:'Loading…',artist:'',duration:'',source:'youtube',
+      thumb:'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg'};
+    addToQueue(yt_item);
     document.getElementById('search-input').value='';
     fetch('https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v='+id+'&format=json')
       .then(function(r){return r.ok?r.json():Promise.reject()})
       .then(function(d){
         var q=queue.find(function(x){return x.id===id});
-        if(q){q.title=d.title||q.title;renderQueue();}
+        if(q){q.title=d.title||q.title;q.artist=d.author_name||'';renderQueue();}
       }).catch(function(){});
   } else {
     doSearch(raw);
@@ -394,6 +418,7 @@ function appendResults(results, fresh){
   }
   results.forEach(function(r){
     var safe=JSON.stringify(r).replace(/'/g,"&#39;");
+    r.artist=r.artist||r.channel||'';
     var card=document.createElement('div');
     card.className='r-card';
     card.onclick=function(){addResult(r)};
@@ -410,28 +435,58 @@ document.getElementById('results-scroll').addEventListener('scroll', function(){
   }
 });
 function addResult(r){
-  addToQueue(r);
+  addToQueue({id:r.id,url:r.url||('https://www.youtube.com/watch?v='+r.id),
+    title:r.title,artist:r.artist||r.channel||'',
+    thumb:r.thumb,source:r.source||'youtube'});
   toast('\u2713 '+r.title.slice(0,28)+'\u2026 added','ok');
 }
 
 // ── Queue ─────────────────────────────────────────────────────────────────
 function addToQueue(item){
-  if(queue.some(function(q){return q.id===item.id})){toast('Already in queue');return;}
+  var _key=item.url||item.id;
+  if(queue.some(function(q){return (q.url||q.id)===_key})){toast('Already in queue');return;}
   queue.push(item);
   renderQueue();
   if(currentIdx===-1) playAt(queue.length-1);
 }
 
 function playAt(idx){
-  if(!playerReady||idx<0||idx>=queue.length) return;
+  if(idx<0||idx>=queue.length) return;
   currentIdx=idx;
   var item=queue[idx];
   document.getElementById('placeholder').style.display='none';
-  player.loadVideoById(item.id);
-  setNPTitle(item.title);
+  var displayTitle=item.title+(item.artist?' — '+item.artist:'');
+  setNPTitle(displayTitle);
   renderQueue();
   updateQueueCount();
   lastPushed={};
+  if(item.source==='soundcloud'){
+    document.getElementById('yt-player').style.display='none';
+    var scEl=document.getElementById('sc-player');
+    scEl.style.display='block';
+    scEl.src='https://w.soundcloud.com/player/?url='+encodeURIComponent(item.url||item.id)
+      +'&auto_play=true&hide_related=true&show_comments=false&visual=true&color=%237c6aff';
+    scWidget=null; scElapsed=0; scDuration=0; scPlaying=false;
+    if(window.SC){
+      setTimeout(function(){
+        scWidget=SC.Widget(scEl);
+        scWidget.bind(SC.Widget.Events.READY,function(){
+          scWidget.bind(SC.Widget.Events.PLAY_PROGRESS,function(e){
+            scElapsed=Math.floor((e.currentPosition||0)/1000);
+            scWidget.getDuration(function(d){scDuration=Math.floor(d/1000);});
+            scPlaying=true;
+          });
+          scWidget.bind(SC.Widget.Events.PAUSE,function(){scPlaying=false;});
+          scWidget.bind(SC.Widget.Events.FINISH,function(){nextTrack();});
+        });
+      },500);
+    }
+  } else {
+    document.getElementById('sc-player').style.display='none';
+    document.getElementById('yt-player').style.display='block';
+    if(playerReady) player.loadVideoById(item.id);
+    scPlaying=false;
+  }
 }
 
 function prevTrack(){if(currentIdx>0) playAt(currentIdx-1);}
@@ -469,7 +524,7 @@ function renderQueue(){
       +'</div>'
       +'<div class="q-info">'
         +'<div class="q-title-sm">'+esc(item.title)+'</div>'
-        +'<div class="q-meta-sm">'+(item.duration||item.channel||'&nbsp;')+'</div>'
+        +'<div class="q-meta-sm">'+(item.artist||item.channel||item.duration||'&nbsp;')+'</div>'
       +'</div>'
       +'<button class="q-rm" onclick="removeFromQueue('+i+',event)" title="Remove">&#x2715;</button>'
       +'</div>';
@@ -488,6 +543,8 @@ function updateQueueCount(){
 
 // ── Player controls ───────────────────────────────────────────────────────
 function togglePlay(){
+  var item=queue[currentIdx];
+  if(item&&item.source==='soundcloud'){if(scWidget)scWidget.toggle();return;}
   if(!playerReady) return;
   if(player.getPlayerState()===YT.PlayerState.PLAYING) player.pauseVideo();
   else player.playVideo();
@@ -555,12 +612,17 @@ function startSyncTimer(){
 }
 
 async function pushSync(){
-  if(!playerReady) return;
-  var playing=player.getPlayerState()===YT.PlayerState.PLAYING;
-  var elapsed=Math.floor(player.getCurrentTime()||0);
-  var dur=Math.floor(player.getDuration()||0);
-  var item=queue[currentIdx];
-  var title=item?item.title:'', url=item?'https://www.youtube.com/watch?v='+item.id:'';
+  var item=queue[currentIdx],playing,elapsed,dur,title,url;
+  if(item&&item.source==='soundcloud'){
+    playing=scPlaying;elapsed=scElapsed;dur=scDuration;
+    title=item.title+(item.artist?' — '+item.artist:'');url=item.url||item.id;
+  } else {
+    if(!playerReady) return;
+    playing=player.getPlayerState()===YT.PlayerState.PLAYING;
+    elapsed=Math.floor(player.getCurrentTime()||0);
+    dur=Math.floor(player.getDuration()||0);
+    title=item?(item.title+(item.artist?' — '+item.artist:'')):'';url=item?('https://www.youtube.com/watch?v='+item.id):'';
+  }
   if(lastPushed.title===title&&lastPushed.playing===playing&&
      Math.abs((lastPushed.elapsed||0)-elapsed)<3) return;
   lastPushed={title,playing,elapsed};
@@ -625,7 +687,7 @@ document.addEventListener('keydown',function(e){
 
 // Boot
 document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
-(function(){var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);})();
+(function(){var t=document.createElement('script');t.src='https://www.youtube.com/iframe_api';document.head.appendChild(t);var s=document.createElement('script');s.src='https://w.soundcloud.com/player/api.js';document.head.appendChild(s);})();
 </script>
 </body>
 </html>
