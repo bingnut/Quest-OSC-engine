@@ -1286,7 +1286,7 @@ class VRCChatbox(tk.Tk):
         self._engine_tag_lbl.pack(anchor="w", padx=14, pady=(0, 4))
 
         # Version footer
-        tk.Label(self._sidebar, text="OSC Quest Engine v1.0 DEV TEST", bg=PANEL, fg=MUTED,
+        tk.Label(self._sidebar, text="OSC Quest Engine v1.0 DEV TEST v2", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
     # ── Tab: Chatbox ──────────────────────────
