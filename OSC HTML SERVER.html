@@ -207,7 +207,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 
   <div class="body">
 
-    <!-- Hidden iframes for audio only --->
+    <!-- Hidden iframes for audio only -->
     <div id="yt-player"></div>
     <iframe id="sc-player" allow="autoplay" scrolling="no"></iframe>
     <!-- ── Audio player pane ── -->
@@ -838,26 +838,22 @@ document.addEventListener('keydown',function(e){
 
 document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
 
-// ── HTML update checker ───────────────────────────────────────────────────
-var _lastHtmlHash='';
-function _simpleHash(s){
-  var h=0;
-  for(var i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}
-  return h;
-}
+// ── HTML update checker (polls local server version counter) ─────────────
+var _htmlVersion=-1;
 setInterval(function(){
-  fetch(SERVER+'/?_nocache='+Date.now())
-    .then(function(r){return r.text()})
-    .then(function(text){
-      var h=String(_simpleHash(text));
-      if(!_lastHtmlHash){_lastHtmlHash=h;return;}
-      if(h!==_lastHtmlHash){
-        _lastHtmlHash=h;
+  fetch(SERVER+'/api/html-version')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var v=d.version||0;
+      if(_htmlVersion===-1){_htmlVersion=v;return;}
+      if(v!==_htmlVersion){
+        _htmlVersion=v;
         var el=document.getElementById('update-flash');
         el.classList.remove('go');
         void el.offsetWidth;
         el.classList.add('go');
-        toast('\u2728 Page updated — refresh to apply','ok');
+        toast('\u2728 Page updated \u2014 reloading...','ok');
+        setTimeout(function(){location.reload();},1800);
       }
     }).catch(function(){});
 },5000);
