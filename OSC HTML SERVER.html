@@ -396,7 +396,9 @@ function handleInput(){
       .then(function(r){return r.ok?r.json():Promise.reject()})
       .then(function(d){
         var q=queue.find(function(x){return x.id===id});
-        if(q){q.title=d.title||q.title;q.artist=d.author_name||'';renderQueue();}
+        if(q){q.title=d.title||q.title;q.artist=d.author_name||'';renderQueue();
+          if(queue.indexOf(q)===currentIdx) setNPTitle(q.title, q.artist);
+        }
       }).catch(function(){});
     return;
   }
