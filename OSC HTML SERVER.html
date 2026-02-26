@@ -27,7 +27,7 @@ html,body{height:100%;background:var(--dark);color:var(--text);
 .pill.err{background:#450a0a;color:var(--err);border-color:#7f1d1d}
 
 /* ── Body: player | search | queue ── */
-.body{display:grid;grid-template-columns:320px 260px 220px;overflow:hidden}
+.body{display:grid;grid-template-columns:300px 1fr 200px;overflow:hidden}
 
 /* ── Audio player pane ── */
 .player-pane{display:flex;flex-direction:column;background:var(--dark);overflow:hidden;border-right:1px solid var(--border)}
@@ -181,6 +181,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 .toast.ok {border-color:var(--success);color:var(--success)}
 .toast.err{border-color:var(--err);color:var(--err)}
 
+.update-flash{position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(124,106,255,.12);border:2px solid var(--accent);
+  pointer-events:none;opacity:0;z-index:999;border-radius:0;
+  animation:none}
+.update-flash.go{animation:flashin .8s ease-out forwards}
+@keyframes flashin{0%{opacity:1}100%{opacity:0}}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px}
@@ -282,6 +288,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="update-flash" id="update-flash"></div>
 
 <script>
 // ── State ─────────────────────────────────────────────────────────────────
@@ -830,6 +837,30 @@ document.addEventListener('keydown',function(e){
 });
 
 document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
+
+// ── HTML update checker ───────────────────────────────────────────────────
+var _lastHtmlHash='';
+function _simpleHash(s){
+  var h=0;
+  for(var i=0;i<s.length;i++){h=(Math.imul(31,h)+s.charCodeAt(i))|0;}
+  return h;
+}
+setInterval(function(){
+  fetch(SERVER+'/?_nocache='+Date.now())
+    .then(function(r){return r.text()})
+    .then(function(text){
+      var h=String(_simpleHash(text));
+      if(!_lastHtmlHash){_lastHtmlHash=h;return;}
+      if(h!==_lastHtmlHash){
+        _lastHtmlHash=h;
+        var el=document.getElementById('update-flash');
+        el.classList.remove('go');
+        void el.offsetWidth;
+        el.classList.add('go');
+        toast('\u2728 Page updated — refresh to apply','ok');
+      }
+    }).catch(function(){});
+},5000);
 startProgTimer();
 startSyncTimer();
 (function(){
