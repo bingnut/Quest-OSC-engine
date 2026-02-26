@@ -315,25 +315,42 @@ def resolve_media_url(url: str) -> list:
 # ─────────────────────────────────────────────
 
 HTML_URL = "https://raw.githubusercontent.com/bingnut/Quest-OSC-engine/refs/heads/main/OSC%20HTML%20SERVER.html"
-_html_cache = {"data": None, "etag": ""}
+_html_cache = {"data": None, "etag": "", "version": 0}
 
-def get_html_page() -> bytes:
+def _fetch_html_once():
+    """Fetch HTML from GitHub, update cache and bump version if changed."""
     try:
         req = urllib.request.Request(HTML_URL, headers={
-            "User-Agent": "OSC-Quest-Engine",
+            "User-Agent":   "OSC-Quest-Engine",
+            "Cache-Control":"no-cache",
             "If-None-Match": _html_cache["etag"],
         })
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            _html_cache["data"] = resp.read()
-            _html_cache["etag"] = resp.headers.get("ETag", "")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = resp.read()
+            new_etag = resp.headers.get("ETag", "")
+            if data != _html_cache["data"]:
+                _html_cache["data"]    = data
+                _html_cache["etag"]    = new_etag
+                _html_cache["version"] += 1
+                print(f"[HTML] Updated → version {_html_cache['version']}")
     except urllib.error.HTTPError as e:
         if e.code != 304:
             print(f"[HTML] Fetch error: {e}")
     except Exception as e:
         print(f"[HTML] Fetch error: {e}")
+
+def _html_poll_loop():
+    while True:
+        _fetch_html_once()
+        time.sleep(5)
+
+# Start background poller immediately
+threading.Thread(target=_html_poll_loop, daemon=True).start()
+
+def get_html_page() -> bytes:
     if _html_cache["data"]:
         return _html_cache["data"]
-    return b"<h1>Could not load player. Check your internet connection.</h1>"
+    return b"<h1>Loading... please refresh in a moment.</h1>"
 
 
 
@@ -510,17 +527,20 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/api/song":
+        _path = urllib.parse.urlparse(self.path).path
+        if _path == "/api/song":
             self._json(song_state)
-        elif self.path == "/api/queue/poll":
+        elif _path == "/api/html-version":
+            self._json({"version": _html_cache["version"]})
+        elif _path == "/api/queue/poll":
             items = _pending_queue[:]
             _pending_queue.clear()
             self._json({"items": items})
-        elif self.path.startswith("/api/search"):
+        elif _path.startswith("/api/search"):
             self._handle_search()
-        elif self.path.startswith("/api/resolve"):
+        elif _path.startswith("/api/resolve"):
             self._handle_resolve()
-        elif self.path in ("/", "/index.html"):
+        elif _path in ("/", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self._cors()
