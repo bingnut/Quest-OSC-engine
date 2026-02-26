@@ -315,27 +315,20 @@ def resolve_media_url(url: str) -> list:
 # ─────────────────────────────────────────────
 
 HTML_URL = "https://raw.githubusercontent.com/bingnut/Quest-OSC-engine/refs/heads/main/OSC%20HTML%20SERVER.html"
-_html_cache = {"data": None, "etag": "", "version": 0}
+_html_cache = {"data": None, "version": 0}
 
 def _fetch_html_once():
-    """Fetch HTML from GitHub, update cache and bump version if changed."""
+    """Always fetch fresh from GitHub with cache-busting. Bump version on change."""
+    bust = str(int(time.time()))
+    url = HTML_URL + "?_bust=" + bust
     try:
-        req = urllib.request.Request(HTML_URL, headers={
-            "User-Agent":   "OSC-Quest-Engine",
-            "Cache-Control":"no-cache",
-            "If-None-Match": _html_cache["etag"],
-        })
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        req = urllib.request.Request(url, headers={"User-Agent": "OSC-Quest-Engine"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read()
-            new_etag = resp.headers.get("ETag", "")
-            if data != _html_cache["data"]:
-                _html_cache["data"]    = data
-                _html_cache["etag"]    = new_etag
-                _html_cache["version"] += 1
-                print(f"[HTML] Updated → version {_html_cache['version']}")
-    except urllib.error.HTTPError as e:
-        if e.code != 304:
-            print(f"[HTML] Fetch error: {e}")
+        if data and data != _html_cache["data"]:
+            _html_cache["data"] = data
+            _html_cache["version"] += 1
+            print(f"[HTML] Updated -> version {_html_cache['version']}")
     except Exception as e:
         print(f"[HTML] Fetch error: {e}")
 
