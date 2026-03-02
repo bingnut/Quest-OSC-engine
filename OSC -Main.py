@@ -317,27 +317,30 @@ def resolve_media_url(url: str) -> list:
 # ─────────────────────────────────────────────
 
 HTML_URL = "https://raw.githubusercontent.com/bingnut/Quest-OSC-engine/refs/heads/main/OSC%20HTML%20SERVER.html"
-_html_cache = {"data": None, "version": 0}
+_html_cache = {"data": None, "version": ""}
 
 def _fetch_html_once():
-    """Always fetch fresh from GitHub with cache-busting. Bump version on change."""
+    """Fetch fresh from GitHub, extract VERSION seed from HTML."""
     bust = str(int(time.time()))
     url = HTML_URL + "?_bust=" + bust
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OSC-Quest-Engine"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read()
-        if data and data != _html_cache["data"]:
+        if data:
+            text = data.decode("utf-8", errors="ignore")
+            m = re.search(r'var VERSION\s*=\s*["\'](\w{16})["\'"]', text)
+            new_ver = m.group(1) if m else ""
             _html_cache["data"] = data
-            _html_cache["version"] += 1
-            print(f"[HTML] Updated -> version {_html_cache['version']}")
+            _html_cache["version"] = new_ver
+            print(f"[HTML] Fetched version={new_ver}")
     except Exception as e:
         print(f"[HTML] Fetch error: {e}")
 
 def _html_poll_loop():
     while True:
         _fetch_html_once()
-        time.sleep(5)
+        time.sleep(10)
 
 # Start background poller immediately
 threading.Thread(target=_html_poll_loop, daemon=True).start()
@@ -527,7 +530,7 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         if _path == "/api/song":
             self._json(song_state)
         elif _path == "/api/html-version":
-            self._json({"version": _html_cache["version"]})
+            self._json({"version": _html_cache.get("version", "")})
         elif _path == "/api/queue/poll":
             # Drain pending into main queue, then return new items only
             new_items = _pending_queue[:]
@@ -1395,14 +1398,42 @@ class VRCChatbox(tk.Tk):
         qf = tk.Frame(q_card, bg=CARD); qf.pack(fill="x")
         self._player_queue_frame = tk.Frame(qf, bg=CARD)
         self._player_queue_frame.pack(fill="x")
-        tk.Label(q_card, text="Items are consumed when the web player polls /api/queue/poll",
+        tk.Label(q_card, text="Shared with the web player in real time.",
                  bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=(6,0))
 
         act = tk.Frame(f, bg=DARK, padx=28, pady=8); act.pack(fill="x")
         StyledButton(act, "🗑 Clear Queue",
                      command=lambda: (_queue.clear(), self._player_refresh_queue())).pack(side="left")
 
+        # Version / refresh status card
+        ver_card = section("Web Player Version")
+        ver_row = tk.Frame(ver_card, bg=CARD); ver_row.pack(fill="x", pady=4)
+        tk.Label(ver_row, text="Current seed:", bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left")
+        self._ver_label = tk.Label(ver_row, text="Checking...", bg=CARD, fg=ACCENT, font=FONT_MONO)
+        self._ver_label.pack(side="left", padx=8)
+        self._ver_status = tk.Label(ver_card, text="", bg=CARD, fg=MUTED, font=FONT_SMALL)
+        self._ver_status.pack(anchor="w", pady=(2,0))
+        self._start_version_checker()
+
         self._player_refresh_queue()
+
+    def _start_version_checker(self):
+        def _check():
+            server_ver = _html_cache.get("version", "")
+            local_ver  = "vBHY2b28ethDw77d"
+            if server_ver:
+                self._ver_label.config(text=server_ver)
+                if server_ver != local_ver:
+                    self._ver_status.config(
+                        text=f"⚠  Web player has updated ({server_ver}) — please refresh your browser page!",
+                        fg=ERR)
+                else:
+                    self._ver_status.config(
+                        text="✓  Web player is up to date", fg=SUCCESS)
+            else:
+                self._ver_label.config(text="Not loaded yet")
+            self.after(10000, _check)
+        self.after(2000, _check)
 
     def _player_refresh_queue(self):
         for w in self._player_queue_frame.winfo_children():
