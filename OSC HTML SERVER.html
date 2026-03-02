@@ -298,6 +298,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 <div class="update-flash" id="update-flash"></div>
 
 <script>
+// ── Version ───────────────────────────────────────────────────────────────
+var VERSION = "vBHY2b28ethDw77d";
+
 // ── State ─────────────────────────────────────────────────────────────────
 var player=null, playerReady=false;
 var scWidget=null, scDuration=0, scElapsed=0, scPlaying=false;
@@ -416,18 +419,10 @@ function onPlayerError(e){
   if((e.data===101||e.data===150) && currentIdx>=0){
     var item=queue[currentIdx];
     if(item && item.id){
-      var ytEl=document.getElementById('yt-player');
-      // Replace IFrame API player with a plain nocookie iframe
-      var newFrame=document.createElement('iframe');
-      newFrame.id='yt-player-fallback';
-      newFrame.width='100%'; newFrame.height='100%';
-      newFrame.style.border='none'; newFrame.style.borderRadius='8px';
-      newFrame.allow='autoplay; fullscreen';
-      newFrame.allowFullscreen=true;
-      newFrame.src='https://www.youtube-nocookie.com/embed/'+item.id+'?autoplay=1&controls=1&rel=0&modestbranding=1';
-      ytEl.parentNode.insertBefore(newFrame, ytEl);
-      ytEl.style.display='none';
-      toast('\u25B6 Playing via fallback player','ok');
+      // Open in a new tab as fallback - embed is genuinely blocked for this video
+      toast('\u26A0 Embed blocked \u2014 opening in new tab','err');
+      window.open('https://www.youtube.com/watch?v='+item.id,'_blank');
+      nextTrack();
       return;
     }
   }
@@ -957,25 +952,22 @@ document.addEventListener('keydown',function(e){
 
 document.getElementById('vol-slider').value=parseInt(localStorage.getItem('oqe_vol')||'80',10);
 
-// ── HTML update checker (polls local server version counter) ─────────────
-var _htmlVersion=-1;
+// ── HTML update checker (compares VERSION seed with server) ──────────────
+var _serverVersion=null;
 setInterval(function(){
   fetch(SERVER+'/api/html-version')
     .then(function(r){return r.json()})
     .then(function(d){
-      var v=d.version||0;
-      if(_htmlVersion===-1){_htmlVersion=v;return;}
-      if(v!==_htmlVersion){
-        _htmlVersion=v;
-        var el=document.getElementById('update-flash');
-        el.classList.remove('go');
-        void el.offsetWidth;
-        el.classList.add('go');
-        toast('\u2728 Page updated \u2014 reloading...','ok');
-        setTimeout(function(){location.reload();},1800);
+      var sv=d.version||'';
+      if(!sv) return;
+      if(_serverVersion===null){_serverVersion=sv;return;}
+      if(sv!==VERSION){
+        // Server has a different version - notify but don't auto reload
+        // (Python will show the warning, user must manually refresh)
+        _serverVersion=sv;
       }
     }).catch(function(){});
-},5000);
+},10000);
 startProgTimer();
 startSyncTimer();
 (function(){
