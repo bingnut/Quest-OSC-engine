@@ -378,7 +378,11 @@ function pushClearToServer(){
 window.onYouTubeIframeAPIReady = function(){
   player = new YT.Player('yt-player',{
     height:'100%',width:'100%',
-    playerVars:{autoplay:0,controls:1,rel:0,modestbranding:1,iv_load_policy:3},
+    playerVars:{
+      autoplay:0,controls:1,rel:0,modestbranding:1,iv_load_policy:3,
+      origin:window.location.origin,
+      host:'https://www.youtube-nocookie.com'
+    },
     events:{onReady:onPlayerReady,onStateChange:onPlayerState,onError:onPlayerError}
   });
 };
@@ -408,6 +412,25 @@ function onPlayerState(e){
   }
 }
 function onPlayerError(e){
+  // 101/150 = embed blocked by IFrame API but may work via nocookie direct src
+  if((e.data===101||e.data===150) && currentIdx>=0){
+    var item=queue[currentIdx];
+    if(item && item.id){
+      var ytEl=document.getElementById('yt-player');
+      // Replace IFrame API player with a plain nocookie iframe
+      var newFrame=document.createElement('iframe');
+      newFrame.id='yt-player-fallback';
+      newFrame.width='100%'; newFrame.height='100%';
+      newFrame.style.border='none'; newFrame.style.borderRadius='8px';
+      newFrame.allow='autoplay; fullscreen';
+      newFrame.allowFullscreen=true;
+      newFrame.src='https://www.youtube-nocookie.com/embed/'+item.id+'?autoplay=1&controls=1&rel=0&modestbranding=1';
+      ytEl.parentNode.insertBefore(newFrame, ytEl);
+      ytEl.style.display='none';
+      toast('\u25B6 Playing via fallback player','ok');
+      return;
+    }
+  }
   var m={2:'Invalid ID',5:'HTML5 error',100:'Not found',101:'Embeds disabled',150:'Embeds disabled'};
   toast('\u26A0 '+(m[e.data]||'Error '+e.data),'err');
 }
@@ -657,8 +680,12 @@ function playAt(idx){
     document.getElementById('sc-player').src='';
     document.getElementById('yt-player').style.display='block';
     scPlaying=false; scWidget=null;
+    // Remove fallback iframe if present from previous error
+    var fb=document.getElementById('yt-player-fallback');
+    if(fb) fb.parentNode.removeChild(fb);
+    document.getElementById('yt-player').style.display='block';
     if(playerReady){
-      player.loadVideoById(item.id);
+      player.loadVideoById({videoId:item.id,suggestedQuality:'hd720'});
     }
   }
 }
