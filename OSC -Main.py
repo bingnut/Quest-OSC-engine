@@ -1374,7 +1374,7 @@ class VRCChatbox(tk.Tk):
             def _do():
                 items = resolve_media_url(url)
                 if items:
-                    _pending_queue.extend(items)
+                    _queue.extend(items)
                     n = len(items)
                     self.after(0, lambda: self._player_status.config(
                         text=f"✓ {n} item{'s' if n>1 else ''} queued", fg=SUCCESS))
@@ -1400,18 +1400,18 @@ class VRCChatbox(tk.Tk):
 
         act = tk.Frame(f, bg=DARK, padx=28, pady=8); act.pack(fill="x")
         StyledButton(act, "🗑 Clear Queue",
-                     command=lambda: (_pending_queue.clear(), self._player_refresh_queue())).pack(side="left")
+                     command=lambda: (_queue.clear(), self._player_refresh_queue())).pack(side="left")
 
         self._player_refresh_queue()
 
     def _player_refresh_queue(self):
         for w in self._player_queue_frame.winfo_children():
             w.destroy()
-        if not _pending_queue:
+        if not _queue:
             tk.Label(self._player_queue_frame, text="Queue is empty",
                      bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w", pady=4)
             return
-        for i, item in enumerate(_pending_queue[:12]):
+        for i, item in enumerate(_queue[:12]):
             row = tk.Frame(self._player_queue_frame, bg=CARD)
             row.pack(fill="x", pady=2)
             src_icon = "🎵" if item.get("source") == "soundcloud" else "▶"
@@ -1420,9 +1420,9 @@ class VRCChatbox(tk.Tk):
             if item.get("artist"):
                 tk.Label(row, text=f"— {item['artist']}",
                          bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=6)
-        if len(_pending_queue) > 12:
+        if len(_queue) > 12:
             tk.Label(self._player_queue_frame,
-                     text=f"... and {len(_pending_queue)-12} more",
+                     text=f"... and {len(_queue)-12} more",
                      bg=CARD, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
 
     def _build_tab_output(self):
