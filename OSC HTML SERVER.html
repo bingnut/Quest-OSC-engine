@@ -306,23 +306,73 @@ var lastPushed={}, syncTimer=null, progTimer=null;
 var looping=false;
 var SERVER = window.location.origin;
 
-// ── Poll Python desktop app for queued items ──────────────────────────────
-setInterval(function(){
-  fetch(SERVER+'/api/queue/poll')
+// ── Sync queue with Python server ────────────────────────────────────────
+var _syncingQueue=false;
+function syncQueueFromServer(){
+  if(_syncingQueue) return;
+  _syncingQueue=true;
+  fetch(SERVER+'/api/queue')
     .then(function(r){return r.json()})
     .then(function(d){
-      (d.items||[]).forEach(function(item){
-        _enqueue({
-          id:    item.url||item.id,
-          url:   item.url||item.id,
-          title: item.title||'Unknown',
-          artist:item.artist||'',
-          thumb: item.thumb||'',
-          source:item.source||'youtube'
-        }, false);
-      });
-    }).catch(function(){});
-}, 3000);
+      _syncingQueue=false;
+      var serverQueue=d.queue||[];
+      var serverIdx=typeof d.currentIdx==='number'?d.currentIdx:-1;
+      // Only update if server has something we don't know about
+      if(serverQueue.length!==queue.length){
+        queue=serverQueue.map(function(item){
+          return {
+            id:    item.url||item.id,
+            url:   item.url||item.id,
+            title: item.title||'Unknown',
+            artist:item.artist||'',
+            thumb: item.thumb||'',
+            source:item.source||'youtube'
+          };
+        });
+        renderQueue();
+        updateQueueCount();
+        // Auto-play if nothing playing and queue has items
+        if(currentIdx===-1 && queue.length>0) playAt(0);
+      }
+      // Sync currentIdx from server if we're idle
+      if(serverIdx>=0 && currentIdx===-1 && serverIdx<queue.length){
+        playAt(serverIdx);
+      }
+    }).catch(function(){_syncingQueue=false;});
+}
+setInterval(syncQueueFromServer, 3000);
+
+function pushQueueToServer(item){
+  fetch(SERVER+'/api/queue/push',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({item:{
+      id:item.id,url:item.url||item.id,
+      title:item.title,artist:item.artist||'',
+      thumb:item.thumb||'',source:item.source||'youtube'
+    }})
+  }).catch(function(){});
+}
+
+function pushIdxToServer(idx){
+  fetch(SERVER+'/api/queue/state',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({currentIdx:idx})
+  }).catch(function(){});
+}
+
+function pushRemoveToServer(idx){
+  fetch(SERVER+'/api/queue/remove',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({index:idx})
+  }).catch(function(){});
+}
+
+function pushClearToServer(){
+  fetch(SERVER+'/api/queue/clear',{method:'POST'}).catch(function(){});
+}
 
 // ── YouTube IFrame API ────────────────────────────────────────────────────
 window.onYouTubeIframeAPIReady = function(){
@@ -550,12 +600,13 @@ document.getElementById('results-scroll').addEventListener('scroll',function(){
 
 
 // ── Queue ─────────────────────────────────────────────────────────────────
-function _enqueue(item, skipDup){
+function _enqueue(item, skipDup, skipServerPush){
   var key=item.url||item.id;
   if(skipDup!==false && queue.some(function(q){return (q.url||q.id)===key})){return;}
   queue.push(item);
   renderQueue();
   updateQueueCount();
+  if(!skipServerPush) pushQueueToServer(item);
   if(currentIdx===-1) playAt(queue.length-1);
 }
 
@@ -564,6 +615,7 @@ function addToQueue(item){ _enqueue(item); }
 function playAt(idx){
   if(idx<0||idx>=queue.length) return;
   currentIdx=idx;
+  pushIdxToServer(idx);
   var item=queue[idx];
   setNPTitle(item.title, item.artist);
   updateArt(item.thumb||'');
@@ -621,6 +673,7 @@ function removeFromQueue(idx,e){
   if(e) e.stopPropagation();
   var was=idx===currentIdx;
   queue.splice(idx,1);
+  pushRemoveToServer(idx);
   if(was){
     currentIdx=-1;
     if(queue.length) playAt(Math.min(idx,queue.length-1));
@@ -629,7 +682,7 @@ function removeFromQueue(idx,e){
   renderQueue(); updateQueueCount();
 }
 
-function clearQueue(){queue=[];currentIdx=-1;stopAll();renderQueue();updateQueueCount();}
+function clearQueue(){queue=[];currentIdx=-1;pushClearToServer();stopAll();renderQueue();updateQueueCount();}
 
 function renderQueue(){
   var el=document.getElementById('queue-list');
