@@ -213,8 +213,10 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 
-# Pending items to push to the web player queue
-_pending_queue: list = []
+# Shared queue — single source of truth for both Python UI and HTML player
+_queue: list = []          # list of {id, url, title, artist, thumb, source}
+_queue_idx: int = -1       # currently playing index (-1 = nothing)
+_pending_queue: list = []  # legacy compat — items added here get moved to _queue
 
 def resolve_media_url(url: str) -> list:
     """
@@ -526,9 +528,18 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif _path == "/api/html-version":
             self._json({"version": _html_cache["version"]})
         elif _path == "/api/queue/poll":
-            items = _pending_queue[:]
+            # Drain pending into main queue, then return new items only
+            global _queue, _queue_idx, _pending_queue
+            new_items = _pending_queue[:]
             _pending_queue.clear()
-            self._json({"items": items})
+            _queue.extend(new_items)
+            self._json({"items": new_items})
+        elif _path == "/api/queue":
+            global _queue, _queue_idx
+            self._json({"queue": _queue, "currentIdx": _queue_idx})
+        elif _path == "/api/queue/state":
+            global _queue_idx
+            self._json({"currentIdx": _queue_idx})
         elif _path.startswith("/api/search"):
             self._handle_search()
         elif _path.startswith("/api/resolve"):
@@ -549,12 +560,39 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             song_state.update(body)
             self._json({"ok": True})
         elif self.path == "/api/queue/push":
+            global _queue, _queue_idx, _pending_queue
             url = body.get("url", "").strip()
-            if url:
+            item = body.get("item")
+            if item:
+                # Direct item push (from HTML player)
+                _queue.append(item)
+                self._json({"ok": True})
+            elif url:
                 def _resolve():
+                    global _queue, _pending_queue
                     items = resolve_media_url(url)
-                    _pending_queue.extend(items)
+                    _queue.extend(items)
                 threading.Thread(target=_resolve, daemon=True).start()
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "No url or item"})
+        elif self.path == "/api/queue/state":
+            global _queue_idx
+            idx = body.get("currentIdx", _queue_idx)
+            _queue_idx = idx
+            self._json({"ok": True})
+        elif self.path == "/api/queue/remove":
+            global _queue, _queue_idx
+            idx = body.get("index", -1)
+            if 0 <= idx < len(_queue):
+                _queue.pop(idx)
+                if _queue_idx >= len(_queue):
+                    _queue_idx = len(_queue) - 1
+            self._json({"ok": True, "queue": _queue, "currentIdx": _queue_idx})
+        elif self.path == "/api/queue/clear":
+            global _queue, _queue_idx
+            _queue.clear()
+            _queue_idx = -1
             self._json({"ok": True})
 
     def _handle_resolve(self):
