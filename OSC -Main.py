@@ -4,7 +4,7 @@ VRC OSC Chatbox — Professional VRChat Chatbox Controller
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, font
+from tkinter import ttk, filedialog, messagebox, fonts
 import json
 import os
 import socket
