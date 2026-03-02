@@ -522,6 +522,7 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        global _queue, _queue_idx, _pending_queue
         _path = urllib.parse.urlparse(self.path).path
         if _path == "/api/song":
             self._json(song_state)
@@ -529,16 +530,13 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._json({"version": _html_cache["version"]})
         elif _path == "/api/queue/poll":
             # Drain pending into main queue, then return new items only
-            global _queue, _queue_idx, _pending_queue
             new_items = _pending_queue[:]
             _pending_queue.clear()
             _queue.extend(new_items)
             self._json({"items": new_items})
         elif _path == "/api/queue":
-            global _queue, _queue_idx
             self._json({"queue": _queue, "currentIdx": _queue_idx})
         elif _path == "/api/queue/state":
-            global _queue_idx
             self._json({"currentIdx": _queue_idx})
         elif _path.startswith("/api/search"):
             self._handle_search()
@@ -554,22 +552,20 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers()
 
     def do_POST(self):
+        global _queue, _queue_idx, _pending_queue
         length = int(self.headers.get("Content-Length", 0))
         body   = json.loads(self.rfile.read(length)) if length else {}
         if self.path == "/api/song":
             song_state.update(body)
             self._json({"ok": True})
         elif self.path == "/api/queue/push":
-            global _queue, _queue_idx, _pending_queue
             url = body.get("url", "").strip()
             item = body.get("item")
             if item:
-                # Direct item push (from HTML player)
                 _queue.append(item)
                 self._json({"ok": True})
             elif url:
                 def _resolve():
-                    global _queue, _pending_queue
                     items = resolve_media_url(url)
                     _queue.extend(items)
                 threading.Thread(target=_resolve, daemon=True).start()
@@ -577,12 +573,10 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._json({"ok": False, "error": "No url or item"})
         elif self.path == "/api/queue/state":
-            global _queue_idx
             idx = body.get("currentIdx", _queue_idx)
             _queue_idx = idx
             self._json({"ok": True})
         elif self.path == "/api/queue/remove":
-            global _queue, _queue_idx
             idx = body.get("index", -1)
             if 0 <= idx < len(_queue):
                 _queue.pop(idx)
@@ -590,7 +584,6 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
                     _queue_idx = len(_queue) - 1
             self._json({"ok": True, "queue": _queue, "currentIdx": _queue_idx})
         elif self.path == "/api/queue/clear":
-            global _queue, _queue_idx
             _queue.clear()
             _queue_idx = -1
             self._json({"ok": True})
