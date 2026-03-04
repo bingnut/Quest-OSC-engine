@@ -196,22 +196,59 @@ def fmt_duration(secs: int) -> str:
     m, s = divmod(max(0, int(secs)), 60)
     return f"{m}:{s:02d}"
 
+def _do_scroll(inner, direction):
+    key = (inner, direction)
+    if key not in _scroll_states:
+        _scroll_states[key] = 0
+    pos = _scroll_states[key]
+    padded = inner + "   "
+    L = len(padded)
+    doubled = padded + padded
+    if direction == 1:  # scroll right: text moves right, window shifts left
+        result = doubled[pos: pos + len(inner)]
+        _scroll_states[key] = (pos + 1) % L
+    else:               # scroll left: text moves left, window shifts right
+        rpos = (L - pos) % L
+        result = doubled[rpos: rpos + len(inner)]
+        _scroll_states[key] = (pos + 1) % L
+    return result
+
+
 def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
+    # {timer} — milliseconds since app started
+    elapsed_ms = int(time.time() * 1000) - _app_start_ms
+    text = text.replace("{timer}", str(elapsed_ms))
     text = text.replace("{mute}", "🔇Muted" if muted else "🔊Live")
     text = text.replace("{time}", get_coast_time())
     remaining = song_state["duration"] - song_state["elapsed"]
-    song_str = f"♪ {song_state['title']} [{fmt_duration(remaining)}]" if song_state["title"] else "♪ Nothing Playing"
+    song_str = (f"♪ {song_state['title']} [{fmt_duration(remaining)}]"
+                if song_state["title"] else "♪ Nothing Playing")
     text = text.replace("{song}", song_str)
     text = text.replace(r" \|\ ", "  |  ")
     engine_tag = "⚙ OSC Quest Engine\nBy -service-"
     text = text.replace("{engine}", engine_tag if engine_on else "")
     if engine_on and "{engine}" not in text:
         text = text.rstrip() + "\n" + engine_tag
+    # Scroll animation: /{a}1/inner/{a}1/ or /{a}2/inner/{a}2/
+    for direction in (1, 2):
+        tag = f"/{{{'a'}}}{direction}/"
+        while tag in text:
+            s = text.find(tag)
+            e = text.find(tag, s + len(tag))
+            if e == -1:
+                break
+            inner = text[s + len(tag): e]
+            text = text[:s] + _do_scroll(inner, direction) + text[e + len(tag):]
     return text
 
 
 
 
+
+# App seed and timer
+PYTHON_SEED = "5H8S4FhEgGeyaZT4"
+_app_start_ms = int(time.time() * 1000)
+_scroll_states = {}  # (inner_text, direction) -> pos
 
 # Shared queue — single source of truth for both Python UI and HTML player
 _queue: list = []          # list of {id, url, title, artist, thumb, source}
@@ -844,7 +881,7 @@ class Separator(tk.Frame):
 class VRCChatbox(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OSC Quest Engine")
+        self.title("OSC Quest Engine  [5H8S4FhEgGeyaZT4]")
         self.configure(bg=DARK)
         self.geometry("980x680")
         self.minsize(780, 540)
