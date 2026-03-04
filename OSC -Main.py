@@ -196,20 +196,23 @@ def fmt_duration(secs: int) -> str:
     m, s = divmod(max(0, int(secs)), 60)
     return f"{m}:{s:02d}"
 
+SCROLL_WIDTH = 5  # visible characters in scroll window
+
 def _do_scroll(inner, direction):
     key = (inner, direction)
     if key not in _scroll_states:
         _scroll_states[key] = 0
     pos = _scroll_states[key]
-    padded = inner + "   "
+    # Pad inner so it loops smoothly through the 5-char window
+    padded = inner + "     "  # 5 spaces gap before repeat
     L = len(padded)
     doubled = padded + padded
-    if direction == 1:  # scroll right: text moves right, window shifts left
-        result = doubled[pos: pos + len(inner)]
+    if direction == 1:  # scroll right: window moves right through text
+        result = doubled[pos: pos + SCROLL_WIDTH]
         _scroll_states[key] = (pos + 1) % L
-    else:               # scroll left: text moves left, window shifts right
+    else:               # scroll left: window moves left through text
         rpos = (L - pos) % L
-        result = doubled[rpos: rpos + len(inner)]
+        result = doubled[rpos: rpos + SCROLL_WIDTH]
         _scroll_states[key] = (pos + 1) % L
     return result
 
