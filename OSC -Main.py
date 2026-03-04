@@ -249,7 +249,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 # App seed and timer
-PYTHON_SEED = "rK9mXwP2nQvT7cL2"
+PYTHON_SEED = "Jn4bWqX8cTzR2mYv"
 _app_start_ms = int(time.time() * 1000)
 _scroll_states = {}  # (inner_text, direction) -> pos
 
@@ -884,7 +884,7 @@ class Separator(tk.Frame):
 class VRCChatbox(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OSC Quest Engine  [rK9mXwP3nQvT7cL2]")
+        self.title("OSC Quest Engine  [Jn4bWqX8cTzR2mYv]")
         self.configure(bg=DARK)
         self.geometry("980x680")
         self.minsize(780, 540)
@@ -1640,14 +1640,29 @@ class VRCChatbox(tk.Tk):
             threading.Thread(target=self._loop_worker, daemon=True).start()
 
     def _loop_worker(self):
+        ANIM_FRAME_DELAY = 1.5  # seconds between frames (VRChat rate limit)
         while self._send_loop_active:
             text = self._chatbox_text.get("1.0", "end-1c")
-            if text.strip():
+            if not text.strip():
+                time.sleep(0.5)
+                continue
+            has_scroll = "/{a}1/" in text or "/{a}2/" in text
+            if has_scroll:
+                # Animation mode: send one frame every 1.5s continuously
+                # Each call to resolve_vars advances scroll position by 1
                 self._send_osc_message(text)
-            for _ in range(self._send_interval * 10):
-                if not self._send_loop_active:
-                    return
-                time.sleep(0.1)
+                # Wait 1.5s between frames, but stay responsive to stop
+                for _ in range(15):
+                    if not self._send_loop_active:
+                        return
+                    time.sleep(0.1)
+            else:
+                # Normal mode: send once, then wait interval
+                self._send_osc_message(text)
+                for _ in range(self._send_interval * 10):
+                    if not self._send_loop_active:
+                        return
+                    time.sleep(0.1)
 
     def _osc_test(self):
         def _test():
