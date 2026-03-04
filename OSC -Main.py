@@ -196,7 +196,7 @@ def fmt_duration(secs: int) -> str:
     m, s = divmod(max(0, int(secs)), 60)
     return f"{m}:{s:02d}"
 
-SCROLL_WIDTH = 5  # visible characters in scroll window
+SCROLL_WIDTH = 10  # visible characters in scroll window
 
 def _do_scroll(inner, direction):
     key = (inner, direction)
@@ -249,7 +249,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 # App seed and timer
-PYTHON_SEED = "5H8S4FhEgGeyaZT4"
+PYTHON_SEED = "rK9mXwP3nQvT7cL2"
 _app_start_ms = int(time.time() * 1000)
 _scroll_states = {}  # (inner_text, direction) -> pos
 
@@ -884,7 +884,7 @@ class Separator(tk.Frame):
 class VRCChatbox(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OSC Quest Engine  [5H8S4FhEgGeyaZT4]")
+        self.title("OSC Quest Engine  [rK9mXwP3nQvT7cL2]")
         self.configure(bg=DARK)
         self.geometry("980x680")
         self.minsize(780, 540)
