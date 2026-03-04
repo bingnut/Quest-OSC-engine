@@ -249,7 +249,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 # App seed and timer
-PYTHON_SEED = "Jn4bWqX8cTzR2mYv"
+PYTHON_SEED = "Hm6KwZ3pNxQyT9Rv"
 _app_start_ms = int(time.time() * 1000)
 _scroll_states = {}  # (inner_text, direction) -> pos
 
@@ -884,7 +884,7 @@ class Separator(tk.Frame):
 class VRCChatbox(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OSC Quest Engine  [Jn4bWqX8cTzR2mYv]")
+        self.title("OSC Quest Engine  [Hm6KwZ3pNxQyT9Rv]")
         self.configure(bg=DARK)
         self.geometry("980x680")
         self.minsize(780, 540)
@@ -999,6 +999,7 @@ class VRCChatbox(tk.Tk):
         self._build_tab_player()
         self._build_tab_ports()
         self._build_tab_output()
+        self._build_tab_codedebug()
 
     def _build_sidebar(self):
         tk.Label(self._sidebar, text="NAVIGATION", bg=PANEL, fg=MUTED,
@@ -1012,6 +1013,7 @@ class VRCChatbox(tk.Tk):
             ("player",   "Player",   "▶"),
             ("ports",    "Ports",    "🔌"),
             ("output",   "Output",   "📡"),
+            ("codedebug","Code Debug","🐛"),
         ]
         for key, label, icon in nav_items:
             btn = SidebarButton(self._sidebar, label, icon,
@@ -1524,6 +1526,43 @@ class VRCChatbox(tk.Tk):
         self._output_text.tag_configure("addr", foreground=ACCENT, font=FONT_BOLD)
         self._output_text.tag_configure("val",  foreground=ACCENT2)
         self._output_text.tag_configure("time", foreground=MUTED, font=FONT_SMALL)
+
+    def _build_tab_codedebug(self):
+        f = tk.Frame(self._content, bg=DARK)
+        self._tabs["codedebug"] = f
+
+        hdr = tk.Frame(f, bg=DARK, pady=20)
+        hdr.pack(fill="x", padx=28)
+        tk.Label(hdr, text="Code Debug", bg=DARK, fg=TEXT,
+                 font=FONT_HUGE).pack(side="left")
+
+        try:
+            src_path = Path(__file__) if "__file__" in dir() else Path("OSC -Main.py")
+            src = src_path.read_text(encoding="utf-8")
+        except Exception:
+            try:
+                import inspect, sys
+                src = inspect.getsource(sys.modules[__name__])
+            except Exception as e:
+                src = f"Could not load source: {e}"
+
+        code_frame = tk.Frame(f, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        code_frame.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        code_text = tk.Text(
+            code_frame, bg=CARD, fg=TEXT, font=FONT_MONO,
+            relief="flat", state="normal", wrap="none",
+            selectbackground=ACCENT, padx=12, pady=10)
+        code_text.pack(side="left", fill="both", expand=True)
+
+        vsb = ttk.Scrollbar(code_frame, command=code_text.yview)
+        vsb.pack(side="right", fill="y")
+        hsb = ttk.Scrollbar(f, orient="horizontal", command=code_text.xview)
+        hsb.pack(fill="x", padx=28)
+        code_text.config(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        code_text.insert("1.0", src)
+        code_text.config(state="disabled")
 
     def _clear_output(self):
         self._output_text.config(state="normal")
