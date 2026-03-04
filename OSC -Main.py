@@ -249,7 +249,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
 
 
 # App seed and timer
-PYTHON_SEED = "rK9mXwP3nQvT7cL2"
+PYTHON_SEED = "rK9mXwP2nQvT7cL2"
 _app_start_ms = int(time.time() * 1000)
 _scroll_states = {}  # (inner_text, direction) -> pos
 
