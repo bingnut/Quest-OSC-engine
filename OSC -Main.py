@@ -1499,11 +1499,14 @@ class VRCChatbox(tk.Tk):
                              highlightthickness=1, highlightbackground=BORDER)
         info_card.pack(fill="x", padx=28, pady=(0, 14))
         tk.Label(info_card,
-                 text="VRChat does not expose raw bone rotations over OSC — bone pose resets work through\n"
-                      "avatar parameters. The default sends VRCEmote → 0, which exits any active emote\n"
-                      "and returns your avatar to its idle/T-pose bone state.\n\n"
-                      "For avatars with a custom 'ResetPose' parameter, change the OSC address below\n"
-                      "to match your avatar's parameter name (e.g. /avatar/parameters/ResetPose).",
+                 text="VRChat OSC drives avatar parameters via  /avatar/parameters/<name>\n"
+                      "There is no universal bone-reset address — it depends on your avatar's\n"
+                      "animator. Common options:\n\n"
+                      "  •  /avatar/parameters/VRCEmote  →  0    exits emote, returns to idle\n"
+                      "  •  /avatar/parameters/ResetPose →  1    if your avatar has this param\n"
+                      "  •  Any Bool/Int your avatar uses to reset its animation layers\n\n"
+                      "Check your avatar's OSC config in:\n"
+                      "  AppData\\LocalLow\\VRChat\\VRChat\\OSC\\<userId>\\Avatars\\<avatarId>.json",
                  bg=CARD, fg=MUTED, font=FONT_SMALL, justify="left").pack(anchor="w")
 
         # Controls card
