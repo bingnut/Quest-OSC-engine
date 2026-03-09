@@ -117,7 +117,7 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = Path(__file__).parent
 
-PRESETS_FILE = BASE_DIR / "presets.json"
+PRESETS_FILE = BASE_DIR / "presets.html"
 CONFIG_FILE  = BASE_DIR / "config.json"
 
 
@@ -1030,6 +1030,7 @@ def build_presets_html(presets: list) -> str:
   <div class="no-results" id="no-results" style="display:none">No presets match your search.</div>
 </div>
 <footer>OSC Quest Engine &mdash; By -service-</footer>
+<!--PRESETS_DATA:{json.dumps(presets)}:PRESETS_DATA-->
 <script>
 function filterCards(q) {{
   q = q.toLowerCase();
@@ -1120,15 +1121,19 @@ class VRCChatbox(tk.Tk):
     def _load_presets(self):
         if PRESETS_FILE.exists():
             try:
-                self.presets = json.loads(PRESETS_FILE.read_text())
-                return
+                html = PRESETS_FILE.read_text(encoding="utf-8")
+                m = re.search(r'<!--PRESETS_DATA:(.*?):PRESETS_DATA-->', html, re.DOTALL)
+                if m:
+                    self.presets = json.loads(m.group(1))
+                    return
             except Exception:
                 pass
         self.presets = []
-        PRESETS_FILE.write_text(json.dumps(self.presets, indent=2))
+        self._save_presets_file()
 
     def _save_presets_file(self):
-        PRESETS_FILE.write_text(json.dumps(self.presets, indent=2))
+        html = build_presets_html(self.presets)
+        PRESETS_FILE.write_text(html, encoding="utf-8")
 
     # ── UI Build ──────────────────────────────
 
@@ -1486,7 +1491,7 @@ class VRCChatbox(tk.Tk):
         hdr = tk.Frame(f, bg=DARK, pady=20)
         hdr.pack(fill="x", padx=28)
         tk.Label(hdr, text="Poses", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
-        tk.Label(hdr, text="Auto-reset avatar pose/parameters via OSC",
+        tk.Label(hdr, text="Reset avatar bone poses via OSC on a timer",
                  bg=DARK, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=(12, 0), pady=(6, 0))
 
         # Info card
@@ -1494,8 +1499,11 @@ class VRCChatbox(tk.Tk):
                              highlightthickness=1, highlightbackground=BORDER)
         info_card.pack(fill="x", padx=28, pady=(0, 14))
         tk.Label(info_card,
-                 text="Sends  /avatar/parameters/VRCEmote  →  0  on a repeating timer.\n"
-                      "This resets the active VRChat emote/pose slot back to idle.",
+                 text="VRChat does not expose raw bone rotations over OSC — bone pose resets work through\n"
+                      "avatar parameters. The default sends VRCEmote → 0, which exits any active emote\n"
+                      "and returns your avatar to its idle/T-pose bone state.\n\n"
+                      "For avatars with a custom 'ResetPose' parameter, change the OSC address below\n"
+                      "to match your avatar's parameter name (e.g. /avatar/parameters/ResetPose).",
                  bg=CARD, fg=MUTED, font=FONT_SMALL, justify="left").pack(anchor="w")
 
         # Controls card
@@ -2134,8 +2142,9 @@ class VRCChatbox(tk.Tk):
             messagebox.showinfo("Export", "No presets to export.")
             return
         path = filedialog.asksaveasfilename(
-            title="Export Presets as HTML",
+            title="Save Presets HTML Copy",
             defaultextension=".html",
+            initialfile="presets.html",
             filetypes=[("HTML Files", "*.html"), ("All Files", "*.*")])
         if not path:
             return
@@ -2145,18 +2154,26 @@ class VRCChatbox(tk.Tk):
 
     def _preset_import(self):
         path = filedialog.askopenfilename(
-            title="Import Presets", filetypes=[("JSON Files", "*.json"), ("All", "*.*")])
+            title="Import Presets",
+            filetypes=[("Preset Files", "*.html *.json"), ("HTML Files", "*.html"),
+                       ("JSON Files", "*.json"), ("All", "*.*")])
         if not path:
             return
         try:
-            data = json.loads(Path(path).read_text())
+            raw = Path(path).read_text(encoding="utf-8")
+            # Try HTML embedded data first
+            m = re.search(r'<!--PRESETS_DATA:(.*?):PRESETS_DATA-->', raw, re.DOTALL)
+            if m:
+                data = json.loads(m.group(1))
+            else:
+                data = json.loads(raw)
             if isinstance(data, list):
                 self.presets.extend(data)
             elif isinstance(data, dict) and "presets" in data:
                 self.presets.extend(data["presets"])
             self._save_presets_file()
             self._refresh_preset_list()
-            messagebox.showinfo("Imported", f"Imported {len(data)} presets.")
+            messagebox.showinfo("Imported", f"Imported {len(self.presets)} presets.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
