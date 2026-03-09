@@ -167,13 +167,10 @@ COAST_TZ = {
 
 def is_dst(dt: datetime.datetime) -> bool:
     import calendar
-    # US DST: 2nd Sunday March → 1st Sunday Nov
     y = dt.year
-    # 2nd Sunday March
     march_first = datetime.datetime(y, 3, 1)
     days_to_sun = (6 - march_first.weekday()) % 7
     dst_start = datetime.datetime(y, 3, 1 + days_to_sun + 7, 2, 0)
-    # 1st Sunday November
     nov_first = datetime.datetime(y, 11, 1)
     days_to_sun2 = (6 - nov_first.weekday()) % 7
     dst_end = datetime.datetime(y, 11, 1 + days_to_sun2, 2, 0)
@@ -182,10 +179,8 @@ def is_dst(dt: datetime.datetime) -> bool:
 def get_coast_time() -> str:
     utc = datetime.datetime.utcnow()
     dst = is_dst(utc)
-    # West (Pacific)
     off_w = COAST_TZ["west"][3] if dst else COAST_TZ["west"][2]
     tz_w  = COAST_TZ["west"][1] if dst else COAST_TZ["west"][0]
-    # East (Eastern)
     off_e = COAST_TZ["east"][3] if dst else COAST_TZ["east"][2]
     tz_e  = COAST_TZ["east"][1] if dst else COAST_TZ["east"][0]
     t_w = (utc + datetime.timedelta(hours=off_w)).strftime("%I:%M %p")
@@ -196,21 +191,20 @@ def fmt_duration(secs: int) -> str:
     m, s = divmod(max(0, int(secs)), 60)
     return f"{m}:{s:02d}"
 
-SCROLL_WIDTH = 10  # visible characters in scroll window
+SCROLL_WIDTH = 10
 
 def _do_scroll(inner, direction):
     key = (inner, direction)
     if key not in _scroll_states:
         _scroll_states[key] = 0
     pos = _scroll_states[key]
-    # Pad inner so it loops smoothly through the 5-char window
-    padded = inner + "     "  # 5 spaces gap before repeat
+    padded = inner + "     "
     L = len(padded)
     doubled = padded + padded
-    if direction == 1:  # scroll right: window moves right through text
+    if direction == 1:
         result = doubled[pos: pos + SCROLL_WIDTH]
         _scroll_states[key] = (pos + 1) % L
-    else:               # scroll left: window moves left through text
+    else:
         rpos = (L - pos) % L
         result = doubled[rpos: rpos + SCROLL_WIDTH]
         _scroll_states[key] = (pos + 1) % L
@@ -218,7 +212,6 @@ def _do_scroll(inner, direction):
 
 
 def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
-    # {timer} — milliseconds since app started
     elapsed_ms = int(time.time() * 1000) - _app_start_ms
     text = text.replace("{timer}", str(elapsed_ms))
     text = text.replace("{mute}", "🔇Muted" if muted else "🔊Live")
@@ -232,7 +225,6 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     text = text.replace("{engine}", engine_tag if engine_on else "")
     if engine_on and "{engine}" not in text:
         text = text.rstrip() + "\n" + engine_tag
-    # Scroll animation: /{a}1/inner/{a}1/ or /{a}2/inner/{a}2/
     for direction in (1, 2):
         tag = f"/{{{'a'}}}{direction}/"
         while tag in text:
@@ -245,28 +237,17 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     return text
 
 
-
-
-
-# App seed and timer
 PYTHON_SEED = "Hm6KwZ3pNxQyT9Rv"
 _app_start_ms = int(time.time() * 1000)
-_scroll_states = {}  # (inner_text, direction) -> pos
-
-# Shared queue — single source of truth for both Python UI and HTML player
-_queue: list = []          # list of {id, url, title, artist, thumb, source}
-_queue_idx: int = -1       # currently playing index (-1 = nothing)
-_pending_queue: list = []  # legacy compat — items added here get moved to _queue
+_scroll_states = {}
+_queue: list = []
+_queue_idx: int = -1
+_pending_queue: list = []
 
 def resolve_media_url(url: str) -> list:
-    """
-    Given a URL, return a list of {id, title, artist, thumb, source, url} dicts.
-    Handles: YT video, YT playlist, SoundCloud track/playlist.
-    """
     url = url.strip()
     results = []
 
-    # ── YouTube playlist ──────────────────────────────────────────────────
     yt_pl = re.search(r'[?&]list=([A-Za-z0-9_-]+)', url)
     if yt_pl and 'youtube.com' in url or 'youtu.be' in url:
         pl_id = yt_pl.group(1)
@@ -307,7 +288,6 @@ def resolve_media_url(url: str) -> list:
         if results:
             return results
 
-    # ── YouTube single video ──────────────────────────────────────────────
     yt_id = None
     m = (re.search(r'[?&]v=([A-Za-z0-9_-]{11})', url) or
          re.search(r'youtu\.be/([A-Za-z0-9_-]{11})', url) or
@@ -333,7 +313,6 @@ def resolve_media_url(url: str) -> list:
                  'source': 'youtube',
                  'url': f'https://www.youtube.com/watch?v={yt_id}'}]
 
-    # ── SoundCloud ────────────────────────────────────────────────────────
     if 'soundcloud.com' in url:
         try:
             oe_url = f'https://soundcloud.com/oembed?url={urllib.parse.quote(url)}&format=json'
@@ -352,6 +331,7 @@ def resolve_media_url(url: str) -> list:
 
     return []
 
+
 # ─────────────────────────────────────────────
 #  HTTP Server for YouTube Song Sync
 # ─────────────────────────────────────────────
@@ -360,7 +340,6 @@ HTML_URL = "https://raw.githubusercontent.com/bingnut/Quest-OSC-engine/refs/head
 _html_cache = {"data": None, "version": ""}
 
 def _fetch_html_once():
-    """Fetch fresh from GitHub, extract VERSION seed from HTML."""
     bust = str(int(time.time()))
     url = HTML_URL + "?_bust=" + bust
     try:
@@ -382,16 +361,12 @@ def _html_poll_loop():
         _fetch_html_once()
         time.sleep(10)
 
-# Start background poller immediately
 threading.Thread(target=_html_poll_loop, daemon=True).start()
 
 def get_html_page() -> bytes:
     if _html_cache["data"]:
         return _html_cache["data"]
     return b"<h1>Loading... please refresh in a moment.</h1>"
-
-
-
 
 
 def _extract_videos(items):
@@ -472,7 +447,6 @@ HEADERS = {
 
 
 def youtube_search(query: str, continuation: str = "") -> dict:
-    """Return {results, continuation} — continuation token enables load-more."""
     try:
         if continuation:
             api_url = "https://www.youtube.com/youtubei/v1/search"
@@ -557,7 +531,7 @@ def youtube_search(query: str, continuation: str = "") -> dict:
 
 
 class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *args): pass  # silence
+    def log_message(self, *args): pass
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -572,7 +546,6 @@ class SongHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif _path == "/api/html-version":
             self._json({"version": _html_cache.get("version", "")})
         elif _path == "/api/queue/poll":
-            # Drain pending into main queue, then return new items only
             new_items = _pending_queue[:]
             _pending_queue.clear()
             _queue.extend(new_items)
@@ -680,7 +653,6 @@ def start_http_server(port: int):
         t.daemon = True
         t.start()
 
-        # Get real LAN IP by connecting a UDP socket (never sends data)
         try:
             import socket as _s
             s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
@@ -750,7 +722,6 @@ class UnicodePicker(tk.Toplevel):
         self.grab_set()
 
     def _build(self):
-        # Search bar
         top = tk.Frame(self, bg=DARK, pady=8, padx=10)
         top.pack(fill="x")
         tk.Label(top, text="Search:", bg=DARK, fg=MUTED, font=FONT_SMALL).pack(side="left")
@@ -763,7 +734,6 @@ class UnicodePicker(tk.Toplevel):
         entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
         entry.focus_set()
 
-        # Category tabs
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill="both", expand=True, padx=8, pady=(0,8))
         self._frames = {}
@@ -878,6 +848,216 @@ class Separator(tk.Frame):
 
 
 # ─────────────────────────────────────────────
+#  HTML Preset Export Helper
+# ─────────────────────────────────────────────
+
+def build_presets_html(presets: list) -> str:
+    now = datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    cards_html = ""
+    for i, p in enumerate(presets):
+        name   = p.get("name", "Untitled").replace("<", "&lt;").replace(">", "&gt;")
+        author = p.get("author", "").replace("<", "&lt;").replace(">", "&gt;")
+        text   = p.get("text", "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        author_badge = f'<span class="author">by {author}</span>' if author else ""
+        cards_html += f"""
+        <div class="card" id="card-{i}">
+            <div class="card-header">
+                <span class="card-name">{name}</span>
+                {author_badge}
+                <button class="copy-btn" onclick="copyText({i})">Copy</button>
+            </div>
+            <div class="card-text" id="text-{i}">{text}</div>
+            <div class="card-raw" id="raw-{i}" style="display:none">{p.get('text','').replace(chr(39), '&#39;')}</div>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSC Quest Engine — Presets</title>
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    background: #0d0d0f;
+    color: #e8e8f0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 0 0 60px;
+  }}
+  header {{
+    background: #16161a;
+    border-bottom: 1px solid #2a2a35;
+    padding: 22px 36px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }}
+  header h1 {{
+    font-size: 1.4rem;
+    color: #e8e8f0;
+    font-weight: 700;
+  }}
+  header .sub {{
+    font-size: 0.8rem;
+    color: #6b6b80;
+    margin-top: 2px;
+  }}
+  header .badge {{
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #6b6b80;
+    border: 1px solid #2a2a35;
+    padding: 4px 10px;
+    border-radius: 4px;
+  }}
+  .toolbar {{
+    padding: 16px 36px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #2a2a35;
+    background: #16161a;
+  }}
+  .search {{
+    background: #1e1e24;
+    border: 1px solid #2a2a35;
+    color: #e8e8f0;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    width: 260px;
+    outline: none;
+    transition: border-color 0.15s;
+  }}
+  .search:focus {{ border-color: #7c6aff; }}
+  .count {{ color: #6b6b80; font-size: 0.85rem; }}
+  .grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+    padding: 28px 36px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }}
+  .card {{
+    background: #1e1e24;
+    border: 1px solid #2a2a35;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.15s, transform 0.1s;
+  }}
+  .card:hover {{ border-color: #7c6aff; transform: translateY(-2px); }}
+  .card-header {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: #16161a;
+    border-bottom: 1px solid #2a2a35;
+  }}
+  .card-name {{
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #e8e8f0;
+    flex: 1;
+  }}
+  .author {{
+    font-size: 0.75rem;
+    color: #5eead4;
+    background: rgba(94,234,212,0.1);
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }}
+  .copy-btn {{
+    background: #7c6aff;
+    color: #fff;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }}
+  .copy-btn:hover {{ background: #9580ff; }}
+  .copy-btn.copied {{ background: #22c55e; }}
+  .card-text {{
+    padding: 14px 16px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.85rem;
+    color: #b0b0c8;
+    line-height: 1.6;
+    flex: 1;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }}
+  .no-results {{
+    grid-column: 1/-1;
+    text-align: center;
+    color: #6b6b80;
+    padding: 60px 0;
+    font-size: 1rem;
+  }}
+  footer {{
+    text-align: center;
+    color: #6b6b80;
+    font-size: 0.78rem;
+    padding: 24px;
+    border-top: 1px solid #2a2a35;
+    margin-top: 20px;
+  }}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>◈ OSC Quest Engine — Presets</h1>
+    <div class="sub">Exported {now}</div>
+  </div>
+  <div class="badge">By -service-</div>
+</header>
+<div class="toolbar">
+  <input class="search" type="text" placeholder="Search presets..." oninput="filterCards(this.value)" autofocus>
+  <span class="count" id="count">{len(presets)} preset{'s' if len(presets) != 1 else ''}</span>
+</div>
+<div class="grid" id="grid">
+{cards_html}
+  <div class="no-results" id="no-results" style="display:none">No presets match your search.</div>
+</div>
+<footer>OSC Quest Engine &mdash; By -service-</footer>
+<script>
+function filterCards(q) {{
+  q = q.toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('.card').forEach(card => {{
+    const text = card.textContent.toLowerCase();
+    const show = !q || text.includes(q);
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  }});
+  document.getElementById('count').textContent = visible + ' preset' + (visible !== 1 ? 's' : '');
+  document.getElementById('no-results').style.display = visible === 0 ? '' : 'none';
+}}
+function copyText(i) {{
+  const raw = document.getElementById('raw-' + i).textContent;
+  navigator.clipboard.writeText(raw).then(() => {{
+    const btn = document.querySelector('#card-' + i + ' .copy-btn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {{ btn.textContent = 'Copy'; btn.classList.remove('copied'); }}, 1800);
+  }});
+}}
+</script>
+</body>
+</html>"""
+
+
+# ─────────────────────────────────────────────
 #  Main App
 # ─────────────────────────────────────────────
 
@@ -898,6 +1078,9 @@ class VRCChatbox(tk.Tk):
         self._http_running = False
         self._osc_listener_running = False
 
+        # Poses state
+        self._pose_reset_active = False
+
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("TNotebook",       background=PANEL, borderwidth=0)
@@ -915,11 +1098,8 @@ class VRCChatbox(tk.Tk):
         self.bind("<Alt-Y>", lambda _: self._open_unicode_picker())
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Start HTTP server
         self._start_http()
         threading.Thread(target=_song_tick, daemon=True).start()
-
-        # Poll song state from HTTP server periodically
         self._poll_song()
 
     # ── Config / Presets ──────────────────────
@@ -953,7 +1133,6 @@ class VRCChatbox(tk.Tk):
     # ── UI Build ──────────────────────────────
 
     def _build_ui(self):
-        # Titlebar stripe
         titlebar = tk.Frame(self, bg=PANEL, height=52)
         titlebar.pack(fill="x", side="top")
         titlebar.pack_propagate(False)
@@ -975,17 +1154,14 @@ class VRCChatbox(tk.Tk):
                   command=self._restart).pack(side="right", padx=(0, 12))
         Separator(self).pack(fill="x")
 
-        # Body
         body = tk.Frame(self, bg=DARK)
         body.pack(fill="both", expand=True)
 
-        # Sidebar
         self._sidebar = tk.Frame(body, bg=PANEL, width=200)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
         Separator(body).pack(side="left", fill="y")
 
-        # Content area
         self._content = tk.Frame(body, bg=DARK)
         self._content.pack(side="left", fill="both", expand=True)
 
@@ -997,6 +1173,7 @@ class VRCChatbox(tk.Tk):
         self._build_tab_macros()
         self._build_tab_song()
         self._build_tab_player()
+        self._build_tab_poses()        # NEW
         self._build_tab_ports()
         self._build_tab_output()
         self._build_tab_codedebug()
@@ -1006,13 +1183,14 @@ class VRCChatbox(tk.Tk):
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=16, pady=(16, 6))
 
         nav_items = [
-            ("chatbox",  "Chatbox",  "💬"),
-            ("presets",  "Presets",  "📋"),
-            ("macros",   "Macros",   "⚡"),
-            ("song",     "Song Sync","🎵"),
-            ("player",   "Player",   "▶"),
-            ("ports",    "Ports",    "🔌"),
-            ("output",   "Output",   "📡"),
+            ("chatbox",  "Chatbox",   "💬"),
+            ("presets",  "Presets",   "📋"),
+            ("macros",   "Macros",    "⚡"),
+            ("song",     "Song Sync", "🎵"),
+            ("player",   "Player",    "▶"),
+            ("poses",    "Poses",     "🧍"),   # NEW
+            ("ports",    "Ports",     "🔌"),
+            ("output",   "Output",    "📡"),
             ("codedebug","Code Debug","🐛"),
         ]
         for key, label, icon in nav_items:
@@ -1053,7 +1231,6 @@ class VRCChatbox(tk.Tk):
             font=("Segoe UI", 8), wraplength=170, justify="left")
         self._engine_tag_lbl.pack(anchor="w", padx=14, pady=(0, 4))
 
-        # Version footer
         tk.Label(self._sidebar, text="OSC Quest Engine v1.0", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
@@ -1063,14 +1240,12 @@ class VRCChatbox(tk.Tk):
         f = tk.Frame(self._content, bg=DARK)
         self._tabs["chatbox"] = f
 
-        # Header
         hdr = tk.Frame(f, bg=DARK, pady=20)
         hdr.pack(fill="x", padx=28)
         tk.Label(hdr, text="Chatbox", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
         tk.Label(hdr, text="Send messages via VRChat OSC", bg=DARK, fg=MUTED,
                  font=FONT_SMALL).pack(side="left", padx=(12, 0), pady=(6, 0))
 
-        # Message editor card
         card = tk.Frame(f, bg=CARD, padx=20, pady=20,
                         highlightthickness=1, highlightbackground=BORDER)
         card.pack(fill="x", padx=28, pady=(0, 16))
@@ -1092,7 +1267,6 @@ class VRCChatbox(tk.Tk):
         txt_frame.bind("<FocusOut>", lambda _:
             txt_frame.config(highlightbackground=BORDER))
 
-        # Preview
         tk.Label(card, text="Preview", bg=CARD, fg=MUTED,
                  font=FONT_SMALL).pack(anchor="w", pady=(12, 4))
         self._preview_lbl = tk.Label(card, text="", bg=DARK, fg=ACCENT2,
@@ -1102,7 +1276,6 @@ class VRCChatbox(tk.Tk):
         self._chatbox_text.bind("<KeyRelease>", lambda _: self._update_preview())
         self._update_preview_loop()
 
-        # Controls row
         ctrl = tk.Frame(f, bg=DARK)
         ctrl.pack(fill="x", padx=28, pady=(0, 8))
 
@@ -1110,7 +1283,6 @@ class VRCChatbox(tk.Tk):
         StyledButton(ctrl, "Clear", color=CARD,
                      command=self._clear_chatbox).pack(side="left", padx=(8, 0))
 
-        # Loop controls
         loop_card = tk.Frame(f, bg=CARD, padx=20, pady=16,
                              highlightthickness=1, highlightbackground=BORDER)
         loop_card.pack(fill="x", padx=28)
@@ -1145,11 +1317,11 @@ class VRCChatbox(tk.Tk):
         tk.Label(hdr, text="Presets", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
         btn_row = tk.Frame(hdr, bg=DARK)
         btn_row.pack(side="right")
-        StyledButton(btn_row, "＋ New",   command=self._preset_new).pack(side="left")
-        StyledButton(btn_row, "⬆ Import", color=CARD,
+        StyledButton(btn_row, "＋ New",    command=self._preset_new).pack(side="left")
+        StyledButton(btn_row, "⬆ Import",  color=CARD,
                      command=self._preset_import).pack(side="left", padx=6)
-        StyledButton(btn_row, "⬇ Export", color=CARD,
-                     command=self._preset_export).pack(side="left")
+        StyledButton(btn_row, "⬇ Export HTML", color=CARD,
+                     command=self._preset_export_html).pack(side="left")
 
         body = tk.Frame(f, bg=DARK)
         body.pack(fill="both", expand=True, padx=28)
@@ -1175,9 +1347,19 @@ class VRCChatbox(tk.Tk):
         # Editor
         ed = tk.Frame(body, bg=DARK, padx=20)
         ed.pack(side="left", fill="both", expand=True)
+
+        # Name
         tk.Label(ed, text="Name", bg=DARK, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
         self._preset_name_var = tk.StringVar()
         StyledEntry(ed, textvariable=self._preset_name_var).pack(fill="x", pady=(4, 12))
+
+        # Author
+        tk.Label(ed, text="Author", bg=DARK, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
+        self._preset_author_var = tk.StringVar()
+        StyledEntry(ed, textvariable=self._preset_author_var,
+                    font=FONT_MAIN).pack(fill="x", pady=(4, 12))
+
+        # Message
         tk.Label(ed, text="Message", bg=DARK, fg=MUTED, font=FONT_SMALL).pack(anchor="w")
         txt_wrap = tk.Frame(ed, bg=DARK, highlightthickness=1,
                             highlightbackground=BORDER, highlightcolor=ACCENT)
@@ -1189,11 +1371,12 @@ class VRCChatbox(tk.Tk):
 
         act_row = tk.Frame(ed, bg=DARK, pady=10)
         act_row.pack(fill="x")
-        StyledButton(act_row, "💾 Save",  command=self._preset_save).pack(side="left")
+        StyledButton(act_row, "💾 Save",   command=self._preset_save).pack(side="left")
         StyledButton(act_row, "🗑 Delete", color=ERR,
                      command=self._preset_delete).pack(side="left", padx=6)
-        StyledButton(act_row, "▶ Send",  color=SUCCESS,
-                     command=self._preset_send_selected).pack(side="left")
+        # "Use" replaces chatbox content and switches tab
+        StyledButton(act_row, "▶ Use",    color=SUCCESS,
+                     command=self._preset_use).pack(side="left")
 
         self._refresh_preset_list()
 
@@ -1243,7 +1426,6 @@ class VRCChatbox(tk.Tk):
         hdr.pack(fill="x", padx=28)
         tk.Label(hdr, text="Song Sync", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
 
-        # Status card
         sc = tk.Frame(f, bg=CARD, padx=20, pady=16,
                       highlightthickness=1, highlightbackground=BORDER)
         sc.pack(fill="x", padx=28, pady=(0, 16))
@@ -1256,7 +1438,6 @@ class VRCChatbox(tk.Tk):
         self._http_url_lbl = tk.Label(sc, text="", bg=CARD, fg=ACCENT, font=FONT_MONO)
         self._http_url_lbl.pack(anchor="w", pady=(6, 0))
 
-        # Now playing card
         np = tk.Frame(f, bg=CARD, padx=20, pady=16,
                       highlightthickness=1, highlightbackground=BORDER)
         np.pack(fill="x", padx=28, pady=(0, 16))
@@ -1274,7 +1455,6 @@ class VRCChatbox(tk.Tk):
                                     cursor="hand2")
         self._np_url_lbl.pack(anchor="w", pady=(2, 0))
 
-        # Manual set
         man = tk.Frame(f, bg=CARD, padx=20, pady=16,
                        highlightthickness=1, highlightbackground=BORDER)
         man.pack(fill="x", padx=28)
@@ -1296,6 +1476,148 @@ class VRCChatbox(tk.Tk):
                      command=self._set_song_manual).pack(side="left")
         StyledButton(btn_row, "⏹ Stop", color=ERR,
                      command=self._stop_song).pack(side="left", padx=8)
+
+    # ── Tab: Poses (NEW) ──────────────────────
+
+    def _build_tab_poses(self):
+        f = tk.Frame(self._content, bg=DARK)
+        self._tabs["poses"] = f
+
+        hdr = tk.Frame(f, bg=DARK, pady=20)
+        hdr.pack(fill="x", padx=28)
+        tk.Label(hdr, text="Poses", bg=DARK, fg=TEXT, font=FONT_HUGE).pack(side="left")
+        tk.Label(hdr, text="Auto-reset avatar pose/parameters via OSC",
+                 bg=DARK, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=(12, 0), pady=(6, 0))
+
+        # Info card
+        info_card = tk.Frame(f, bg=CARD, padx=20, pady=14,
+                             highlightthickness=1, highlightbackground=BORDER)
+        info_card.pack(fill="x", padx=28, pady=(0, 14))
+        tk.Label(info_card,
+                 text="Sends  /avatar/parameters/VRCEmote  →  0  on a repeating timer.\n"
+                      "This resets the active VRChat emote/pose slot back to idle.",
+                 bg=CARD, fg=MUTED, font=FONT_SMALL, justify="left").pack(anchor="w")
+
+        # Controls card
+        ctrl_card = tk.Frame(f, bg=CARD, padx=20, pady=20,
+                             highlightthickness=1, highlightbackground=BORDER)
+        ctrl_card.pack(fill="x", padx=28, pady=(0, 14))
+
+        # Interval row
+        intv_row = tk.Frame(ctrl_card, bg=CARD)
+        intv_row.pack(fill="x", pady=(0, 14))
+        tk.Label(intv_row, text="Reset Interval:", bg=CARD, fg=MUTED,
+                 font=FONT_SMALL, width=14, anchor="w").pack(side="left")
+        self._pose_interval_var = tk.StringVar(value="2")
+        StyledEntry(intv_row, textvariable=self._pose_interval_var,
+                    width=8).pack(side="left", padx=(0, 8))
+        tk.Label(intv_row, text="seconds", bg=CARD, fg=MUTED,
+                 font=FONT_SMALL).pack(side="left")
+
+        # Custom OSC address row
+        addr_row = tk.Frame(ctrl_card, bg=CARD)
+        addr_row.pack(fill="x", pady=(0, 14))
+        tk.Label(addr_row, text="OSC Address:", bg=CARD, fg=MUTED,
+                 font=FONT_SMALL, width=14, anchor="w").pack(side="left")
+        self._pose_addr_var = tk.StringVar(value="/avatar/parameters/VRCEmote")
+        StyledEntry(addr_row, textvariable=self._pose_addr_var,
+                    width=36).pack(side="left", padx=(0, 8))
+
+        # Value row
+        val_row = tk.Frame(ctrl_card, bg=CARD)
+        val_row.pack(fill="x", pady=(0, 18))
+        tk.Label(val_row, text="Value (int):", bg=CARD, fg=MUTED,
+                 font=FONT_SMALL, width=14, anchor="w").pack(side="left")
+        self._pose_val_var = tk.StringVar(value="0")
+        StyledEntry(val_row, textvariable=self._pose_val_var,
+                    width=8).pack(side="left")
+
+        # Start / Stop button
+        self._pose_btn = StyledButton(ctrl_card, "▶  Start Pose Reset",
+                                      color=SUCCESS, command=self._toggle_pose_reset)
+        self._pose_btn.pack(side="left")
+
+        # Send once button
+        StyledButton(ctrl_card, "⚡ Send Once", color=CARD,
+                     command=self._pose_send_once).pack(side="left", padx=(12, 0))
+
+        # Status card
+        self._pose_status_card = tk.Frame(f, bg=CARD, padx=20, pady=14,
+                                          highlightthickness=1, highlightbackground=BORDER)
+        self._pose_status_card.pack(fill="x", padx=28)
+
+        status_hdr = tk.Frame(self._pose_status_card, bg=CARD)
+        status_hdr.pack(fill="x")
+        tk.Label(status_hdr, text="Status", bg=CARD, fg=MUTED,
+                 font=FONT_SMALL).pack(side="left")
+        self._pose_dot = tk.Label(status_hdr, text="●", bg=CARD, fg=MUTED,
+                                  font=("Segoe UI", 16))
+        self._pose_dot.pack(side="right")
+
+        self._pose_status_lbl = tk.Label(self._pose_status_card,
+                                         text="Not running",
+                                         bg=CARD, fg=MUTED, font=FONT_MONO,
+                                         anchor="w")
+        self._pose_status_lbl.pack(anchor="w", pady=(6, 0))
+
+        self._pose_counter_lbl = tk.Label(self._pose_status_card,
+                                          text="",
+                                          bg=CARD, fg=ACCENT2, font=FONT_SMALL,
+                                          anchor="w")
+        self._pose_counter_lbl.pack(anchor="w", pady=(2, 0))
+        self._pose_send_count = 0
+
+    def _toggle_pose_reset(self):
+        if self._pose_reset_active:
+            self._pose_reset_active = False
+            self._pose_btn.config(text="▶  Start Pose Reset", bg=SUCCESS)
+            self._pose_dot.config(fg=MUTED)
+            self._pose_status_lbl.config(text="Stopped", fg=MUTED)
+        else:
+            try:
+                interval = float(self._pose_interval_var.get())
+                if interval < 0.1:
+                    interval = 0.1
+            except ValueError:
+                interval = 2.0
+            self._pose_interval_var.set(str(interval))
+            self._pose_reset_active = True
+            self._pose_send_count = 0
+            self._pose_btn.config(text="⏹  Stop Pose Reset", bg=ERR)
+            self._pose_dot.config(fg=SUCCESS)
+            addr = self._pose_addr_var.get().strip() or "/avatar/parameters/VRCEmote"
+            self._pose_status_lbl.config(
+                text=f"Sending  {addr}  →  {self._pose_val_var.get()}  every {interval}s",
+                fg=SUCCESS)
+            threading.Thread(target=self._pose_reset_worker,
+                             args=(interval,), daemon=True).start()
+
+    def _pose_reset_worker(self, interval: float):
+        while self._pose_reset_active:
+            self._pose_send_once()
+            # Sleep in small chunks so we stay responsive to stop
+            elapsed = 0.0
+            step = 0.1
+            while elapsed < interval and self._pose_reset_active:
+                time.sleep(step)
+                elapsed += step
+
+    def _pose_send_once(self):
+        try:
+            ip, port = self._get_ip_port()
+            addr = self._pose_addr_var.get().strip() or "/avatar/parameters/VRCEmote"
+            try:
+                val = int(self._pose_val_var.get())
+            except ValueError:
+                val = 0
+            send_osc(ip, port, addr, val)
+            self._pose_send_count += 1
+            count = self._pose_send_count
+            self.after(0, lambda: self._pose_counter_lbl.config(
+                text=f"Sends: {count}  —  last at {datetime.datetime.now().strftime('%H:%M:%S')}"))
+        except Exception as e:
+            self.after(0, lambda: self._pose_status_lbl.config(
+                text=f"Error: {e}", fg=ERR))
 
     # ── Tab: Ports ────────────────────────────
 
@@ -1319,7 +1641,6 @@ class VRCChatbox(tk.Tk):
                 tk.Label(hrow, text=hint, bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=8)
             return c
 
-        # OSC
         osc_card = section("VRChat OSC Target", "Default: 127.0.0.1:9000")
         r1 = tk.Frame(osc_card, bg=CARD, pady=8); r1.pack(fill="x")
         tk.Label(r1, text="IP Address:", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1333,7 +1654,6 @@ class VRCChatbox(tk.Tk):
         self._port_var = tk.StringVar(value=str(self.config_data["port"]))
         StyledEntry(r2, textvariable=self._port_var, width=10).pack(side="left")
 
-        # HTTP
         http_card = section("Song Sync HTTP Server", "Accessible from any device on your network")
         r3 = tk.Frame(http_card, bg=CARD, pady=8); r3.pack(fill="x")
         tk.Label(r3, text="HTTP Port:", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1341,7 +1661,6 @@ class VRCChatbox(tk.Tk):
         self._http_port_var = tk.StringVar(value=str(self.config_data["http_port"]))
         StyledEntry(r3, textvariable=self._http_port_var, width=10).pack(side="left")
 
-        # OSC Receive
         recv_card = section("OSC Receive (from VRChat)", "VRChat sends on port 9001 by default")
         r4 = tk.Frame(recv_card, bg=CARD, pady=8); r4.pack(fill="x")
         tk.Label(r4, text="Listen Port:", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1357,7 +1676,6 @@ class VRCChatbox(tk.Tk):
         self._recv_status = tk.Label(r4b, text="Not listening", bg=CARD, fg=MUTED, font=FONT_SMALL)
         self._recv_status.pack(side="left", padx=10)
 
-        # Test + Save
         act = tk.Frame(f, bg=DARK, padx=28, pady=12)
         act.pack(fill="x")
         StyledButton(act, "💾 Save Settings", command=self._ports_save).pack(side="left")
@@ -1366,7 +1684,6 @@ class VRCChatbox(tk.Tk):
         self._port_status = tk.Label(act, text="", bg=DARK, fg=SUCCESS, font=FONT_SMALL)
         self._port_status.pack(side="left")
 
-        # Info card
         info = section("Connection Info")
         try:
             import socket as _s
@@ -1402,7 +1719,6 @@ class VRCChatbox(tk.Tk):
                 tk.Label(hrow, text=hint, bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=8)
             return c
 
-        # URL input
         url_card = section("Add to Queue", "YouTube video, playlist, or SoundCloud URL")
         ur = tk.Frame(url_card, bg=CARD, pady=8); ur.pack(fill="x")
         tk.Label(ur, text="URL:", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1435,7 +1751,6 @@ class VRCChatbox(tk.Tk):
         self._player_status = tk.Label(url_card, text="", bg=CARD, fg=MUTED, font=FONT_SMALL)
         self._player_status.pack(anchor="w", pady=(4,0))
 
-        # Pending queue display
         q_card = section("Pending Queue", "Items waiting to be picked up by the web player")
         qf = tk.Frame(q_card, bg=CARD); qf.pack(fill="x")
         self._player_queue_frame = tk.Frame(qf, bg=CARD)
@@ -1447,7 +1762,6 @@ class VRCChatbox(tk.Tk):
         StyledButton(act, "🗑 Clear Queue",
                      command=lambda: (_queue.clear(), self._player_refresh_queue())).pack(side="left")
 
-        # Version / refresh status card
         ver_card = section("Web Player Version")
         ver_row = tk.Frame(ver_card, bg=CARD); ver_row.pack(fill="x", pady=4)
         tk.Label(ver_row, text="Current seed:", bg=CARD, fg=MUTED, font=FONT_SMALL).pack(side="left")
@@ -1625,6 +1939,7 @@ class VRCChatbox(tk.Tk):
         sock.close()
 
     def _restart(self):
+        self._pose_reset_active = False
         self.destroy()
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -1637,7 +1952,7 @@ class VRCChatbox(tk.Tk):
         self._tabs[key].pack(fill="both", expand=True)
         self._sidebar_btns[key].set_active(True)
 
-    # ── OSC / Send ─────────────────────────────
+    # ── OSC / Send ─────────────────────────────────
 
     def _get_ip_port(self):
         return self.config_data["ip"], int(self.config_data["port"])
@@ -1679,7 +1994,7 @@ class VRCChatbox(tk.Tk):
             threading.Thread(target=self._loop_worker, daemon=True).start()
 
     def _loop_worker(self):
-        ANIM_FRAME_DELAY = 1.5  # seconds between frames (VRChat rate limit)
+        ANIM_FRAME_DELAY = 1.5
         while self._send_loop_active:
             text = self._chatbox_text.get("1.0", "end-1c")
             if not text.strip():
@@ -1687,16 +2002,12 @@ class VRCChatbox(tk.Tk):
                 continue
             has_scroll = "/{a}1/" in text or "/{a}2/" in text
             if has_scroll:
-                # Animation mode: send one frame every 1.5s continuously
-                # Each call to resolve_vars advances scroll position by 1
                 self._send_osc_message(text)
-                # Wait 1.5s between frames, but stay responsive to stop
                 for _ in range(15):
                     if not self._send_loop_active:
                         return
                     time.sleep(0.1)
             else:
-                # Normal mode: send once, then wait interval
                 self._send_osc_message(text)
                 for _ in range(self._send_interval * 10):
                     if not self._send_loop_active:
@@ -1758,7 +2069,11 @@ class VRCChatbox(tk.Tk):
     def _refresh_preset_list(self):
         self._preset_lb.delete(0, "end")
         for p in self.presets:
-            self._preset_lb.insert("end", f"  {p['name']}")
+            author = p.get("author", "")
+            label = f"  {p['name']}"
+            if author:
+                label += f"  ·  {author}"
+            self._preset_lb.insert("end", label)
 
     def _preset_select(self, _=None):
         sel = self._preset_lb.curselection()
@@ -1766,27 +2081,31 @@ class VRCChatbox(tk.Tk):
             return
         idx = sel[0]
         p = self.presets[idx]
-        self._preset_name_var.set(p["name"])
+        self._preset_name_var.set(p.get("name", ""))
+        self._preset_author_var.set(p.get("author", ""))
         self._preset_text.delete("1.0", "end")
-        self._preset_text.insert("1.0", p["text"])
+        self._preset_text.insert("1.0", p.get("text", ""))
 
     def _preset_new(self):
         self._preset_lb.selection_clear(0, "end")
         self._preset_name_var.set("New Preset")
+        self._preset_author_var.set("")
         self._preset_text.delete("1.0", "end")
 
     def _preset_save(self):
-        name = self._preset_name_var.get().strip()
-        text = self._preset_text.get("1.0", "end-1c")
+        name   = self._preset_name_var.get().strip()
+        author = self._preset_author_var.get().strip()
+        text   = self._preset_text.get("1.0", "end-1c")
         if not name:
             messagebox.showwarning("Warning", "Preset must have a name.")
             return
         sel = self._preset_lb.curselection()
+        entry = {"name": name, "author": author, "text": text}
         if sel:
             idx = sel[0]
-            self.presets[idx] = {"name": name, "text": text}
+            self.presets[idx] = entry
         else:
-            self.presets.append({"name": name, "text": text})
+            self.presets.append(entry)
         self._save_presets_file()
         self._refresh_preset_list()
 
@@ -1800,10 +2119,29 @@ class VRCChatbox(tk.Tk):
             self._save_presets_file()
             self._refresh_preset_list()
 
-    def _preset_send_selected(self):
+    def _preset_use(self):
+        """Replace chatbox text with this preset and switch to Chatbox tab."""
         text = self._preset_text.get("1.0", "end-1c")
-        if text.strip():
-            threading.Thread(target=self._send_osc_message, args=(text,), daemon=True).start()
+        if not text.strip():
+            return
+        self._chatbox_text.delete("1.0", tk.END)
+        self._chatbox_text.insert("1.0", text)
+        self._update_preview()
+        self._show_tab("chatbox")
+
+    def _preset_export_html(self):
+        if not self.presets:
+            messagebox.showinfo("Export", "No presets to export.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export Presets as HTML",
+            defaultextension=".html",
+            filetypes=[("HTML Files", "*.html"), ("All Files", "*.*")])
+        if not path:
+            return
+        html = build_presets_html(self.presets)
+        Path(path).write_text(html, encoding="utf-8")
+        messagebox.showinfo("Exported", f"Saved {len(self.presets)} presets to:\n{path}")
 
     def _preset_import(self):
         path = filedialog.askopenfilename(
@@ -1821,15 +2159,6 @@ class VRCChatbox(tk.Tk):
             messagebox.showinfo("Imported", f"Imported {len(data)} presets.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
-    def _preset_export(self):
-        path = filedialog.asksaveasfilename(
-            title="Export Presets", defaultextension=".json",
-            filetypes=[("JSON Files", "*.json")])
-        if not path:
-            return
-        Path(path).write_text(json.dumps(self.presets, indent=2))
-        messagebox.showinfo("Exported", f"Saved to {path}")
 
     # ── Macros ────────────────────────────────
 
@@ -1859,7 +2188,6 @@ class VRCChatbox(tk.Tk):
             rem = song_state["duration"] - song_state["elapsed"]
             self._np_time.config(
                 text=f"⏱ {fmt_duration(song_state['elapsed'])} / {fmt_duration(song_state['duration'])}  —  {fmt_duration(rem)} remaining")
-            # Show URL if pushed by extension
             url = song_state.get("url", "")
             if url:
                 short = url[:60] + ("…" if len(url) > 60 else "")
@@ -1922,6 +2250,7 @@ class VRCChatbox(tk.Tk):
 
     def _on_close(self):
         self._send_loop_active = False
+        self._pose_reset_active = False
         self._save_config()
         self.destroy()
 
