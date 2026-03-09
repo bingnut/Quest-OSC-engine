@@ -117,7 +117,7 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = Path(__file__).parent
 
-PRESETS_FILE = BASE_DIR / "presets.html"
+PRESETS_DIR = BASE_DIR / "presets"
 CONFIG_FILE  = BASE_DIR / "config.json"
 
 
@@ -848,214 +848,29 @@ class Separator(tk.Frame):
 
 
 # ─────────────────────────────────────────────
-#  HTML Preset Export Helper
+#  Preset HTML File Helpers (one .html file per preset)
 # ─────────────────────────────────────────────
 
-def build_presets_html(presets: list) -> str:
-    now = datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p")
-    cards_html = ""
-    for i, p in enumerate(presets):
-        name   = p.get("name", "Untitled").replace("<", "&lt;").replace(">", "&gt;")
-        author = p.get("author", "").replace("<", "&lt;").replace(">", "&gt;")
-        text   = p.get("text", "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-        author_badge = f'<span class="author">by {author}</span>' if author else ""
-        cards_html += f"""
-        <div class="card" id="card-{i}">
-            <div class="card-header">
-                <span class="card-name">{name}</span>
-                {author_badge}
-                <button class="copy-btn" onclick="copyText({i})">Copy</button>
-            </div>
-            <div class="card-text" id="text-{i}">{text}</div>
-            <div class="card-raw" id="raw-{i}" style="display:none">{p.get('text','').replace(chr(39), '&#39;')}</div>
-        </div>"""
+def _preset_to_html(p: dict) -> str:
+    """Encode a single preset as a simple HTML file."""
+    name   = p.get("name", "")
+    author = p.get("author", "")
+    text   = p.get("text", "")
+    return (f"<name>{name}</name>\n"
+            f"<author>{author}</author>\n"
+            f"<text>{text}</text>\n")
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OSC Quest Engine — Presets</title>
-<style>
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    background: #0d0d0f;
-    color: #e8e8f0;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    min-height: 100vh;
-    padding: 0 0 60px;
-  }}
-  header {{
-    background: #16161a;
-    border-bottom: 1px solid #2a2a35;
-    padding: 22px 36px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }}
-  header h1 {{
-    font-size: 1.4rem;
-    color: #e8e8f0;
-    font-weight: 700;
-  }}
-  header .sub {{
-    font-size: 0.8rem;
-    color: #6b6b80;
-    margin-top: 2px;
-  }}
-  header .badge {{
-    margin-left: auto;
-    font-size: 0.75rem;
-    color: #6b6b80;
-    border: 1px solid #2a2a35;
-    padding: 4px 10px;
-    border-radius: 4px;
-  }}
-  .toolbar {{
-    padding: 16px 36px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-bottom: 1px solid #2a2a35;
-    background: #16161a;
-  }}
-  .search {{
-    background: #1e1e24;
-    border: 1px solid #2a2a35;
-    color: #e8e8f0;
-    padding: 8px 14px;
-    border-radius: 6px;
-    font-size: 0.9rem;
-    width: 260px;
-    outline: none;
-    transition: border-color 0.15s;
-  }}
-  .search:focus {{ border-color: #7c6aff; }}
-  .count {{ color: #6b6b80; font-size: 0.85rem; }}
-  .grid {{
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 16px;
-    padding: 28px 36px;
-    max-width: 1400px;
-    margin: 0 auto;
-  }}
-  .card {{
-    background: #1e1e24;
-    border: 1px solid #2a2a35;
-    border-radius: 10px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    transition: border-color 0.15s, transform 0.1s;
-  }}
-  .card:hover {{ border-color: #7c6aff; transform: translateY(-2px); }}
-  .card-header {{
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    background: #16161a;
-    border-bottom: 1px solid #2a2a35;
-  }}
-  .card-name {{
-    font-weight: 700;
-    font-size: 0.95rem;
-    color: #e8e8f0;
-    flex: 1;
-  }}
-  .author {{
-    font-size: 0.75rem;
-    color: #5eead4;
-    background: rgba(94,234,212,0.1);
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }}
-  .copy-btn {{
-    background: #7c6aff;
-    color: #fff;
-    border: none;
-    padding: 4px 12px;
-    border-radius: 5px;
-    font-size: 0.78rem;
-    cursor: pointer;
-    font-weight: 600;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }}
-  .copy-btn:hover {{ background: #9580ff; }}
-  .copy-btn.copied {{ background: #22c55e; }}
-  .card-text {{
-    padding: 14px 16px;
-    font-family: 'Consolas', monospace;
-    font-size: 0.85rem;
-    color: #b0b0c8;
-    line-height: 1.6;
-    flex: 1;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }}
-  .no-results {{
-    grid-column: 1/-1;
-    text-align: center;
-    color: #6b6b80;
-    padding: 60px 0;
-    font-size: 1rem;
-  }}
-  footer {{
-    text-align: center;
-    color: #6b6b80;
-    font-size: 0.78rem;
-    padding: 24px;
-    border-top: 1px solid #2a2a35;
-    margin-top: 20px;
-  }}
-</style>
-</head>
-<body>
-<header>
-  <div>
-    <h1>◈ OSC Quest Engine — Presets</h1>
-    <div class="sub">Exported {now}</div>
-  </div>
-  <div class="badge">By -service-</div>
-</header>
-<div class="toolbar">
-  <input class="search" type="text" placeholder="Search presets..." oninput="filterCards(this.value)" autofocus>
-  <span class="count" id="count">{len(presets)} preset{'s' if len(presets) != 1 else ''}</span>
-</div>
-<div class="grid" id="grid">
-{cards_html}
-  <div class="no-results" id="no-results" style="display:none">No presets match your search.</div>
-</div>
-<footer>OSC Quest Engine &mdash; By -service-</footer>
-<!--PRESETS_DATA:{json.dumps(presets)}:PRESETS_DATA-->
-<script>
-function filterCards(q) {{
-  q = q.toLowerCase();
-  let visible = 0;
-  document.querySelectorAll('.card').forEach(card => {{
-    const text = card.textContent.toLowerCase();
-    const show = !q || text.includes(q);
-    card.style.display = show ? '' : 'none';
-    if (show) visible++;
-  }});
-  document.getElementById('count').textContent = visible + ' preset' + (visible !== 1 ? 's' : '');
-  document.getElementById('no-results').style.display = visible === 0 ? '' : 'none';
-}}
-function copyText(i) {{
-  const raw = document.getElementById('raw-' + i).textContent;
-  navigator.clipboard.writeText(raw).then(() => {{
-    const btn = document.querySelector('#card-' + i + ' .copy-btn');
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => {{ btn.textContent = 'Copy'; btn.classList.remove('copied'); }}, 1800);
-  }});
-}}
-</script>
-</body>
-</html>"""
+def _html_to_preset(html: str) -> dict:
+    """Decode a preset from its simple HTML file."""
+    def _tag(tag):
+        m = re.search(rf'<{tag}>(.*?)</{tag}>', html, re.DOTALL)
+        return m.group(1) if m else ""
+    return {"name": _tag("preset-name"), "author": _tag("preset-author"), "text": _tag("preset-text")}
+
+def _safe_filename(name: str) -> str:
+    """Turn a preset name into a safe filename."""
+    safe = re.sub(r'[\\/*?:"<>|]', "_", name).strip() or "preset"
+    return safe[:64] + ".html"
 
 
 # ─────────────────────────────────────────────
@@ -1119,21 +934,38 @@ class VRCChatbox(tk.Tk):
         CONFIG_FILE.write_text(json.dumps(self.config_data, indent=2))
 
     def _load_presets(self):
-        if PRESETS_FILE.exists():
+        PRESETS_DIR.mkdir(exist_ok=True)
+        self.presets = []
+        for f in sorted(PRESETS_DIR.glob("*.html")):
             try:
-                html = PRESETS_FILE.read_text(encoding="utf-8")
-                m = re.search(r'<!--PRESETS_DATA:(.*?):PRESETS_DATA-->', html, re.DOTALL)
-                if m:
-                    self.presets = json.loads(m.group(1))
-                    return
+                p = _html_to_preset(f.read_text(encoding="utf-8"))
+                if p.get("name"):
+                    p["_file"] = f.name   # remember filename for updates/deletes
+                    self.presets.append(p)
             except Exception:
                 pass
-        self.presets = []
-        self._save_presets_file()
 
     def _save_presets_file(self):
-        html = build_presets_html(self.presets)
-        PRESETS_FILE.write_text(html, encoding="utf-8")
+        PRESETS_DIR.mkdir(exist_ok=True)
+        # Rebuild all files from current self.presets list
+        # Remove stale files first
+        existing = {f.name for f in PRESETS_DIR.glob("*.html")}
+        wanted   = set()
+        for p in self.presets:
+            fname = p.get("_file") or _safe_filename(p.get("name", "preset"))
+            # If two presets would collide, add index suffix
+            base, ext = fname.rsplit(".", 1)
+            candidate = fname
+            i = 2
+            while candidate in wanted:
+                candidate = f"{base}_{i}.{ext}"
+                i += 1
+            p["_file"] = candidate
+            wanted.add(candidate)
+            (PRESETS_DIR / candidate).write_text(
+                _preset_to_html(p), encoding="utf-8")
+        for stale in existing - wanted:
+            (PRESETS_DIR / stale).unlink(missing_ok=True)
 
     # ── UI Build ──────────────────────────────
 
@@ -1325,7 +1157,7 @@ class VRCChatbox(tk.Tk):
         StyledButton(btn_row, "＋ New",    command=self._preset_new).pack(side="left")
         StyledButton(btn_row, "⬆ Import",  color=CARD,
                      command=self._preset_import).pack(side="left", padx=6)
-        StyledButton(btn_row, "⬇ Export HTML", color=CARD,
+        StyledButton(btn_row, "⬇ Export", color=CARD,
                      command=self._preset_export_html).pack(side="left")
 
         body = tk.Frame(f, bg=DARK)
@@ -2111,12 +1943,18 @@ class VRCChatbox(tk.Tk):
             messagebox.showwarning("Warning", "Preset must have a name.")
             return
         sel = self._preset_lb.curselection()
-        entry = {"name": name, "author": author, "text": text}
         if sel:
             idx = sel[0]
+            existing_file = self.presets[idx].get("_file")
+            entry = {"name": name, "author": author, "text": text}
+            # If name changed, delete old file so _save_presets_file makes a new one
+            if existing_file and _safe_filename(name) != existing_file:
+                (PRESETS_DIR / existing_file).unlink(missing_ok=True)
+            else:
+                entry["_file"] = existing_file
             self.presets[idx] = entry
         else:
-            self.presets.append(entry)
+            self.presets.append({"name": name, "author": author, "text": text})
         self._save_presets_file()
         self._refresh_preset_list()
 
@@ -2125,9 +1963,12 @@ class VRCChatbox(tk.Tk):
         if not sel:
             return
         idx = sel[0]
-        if messagebox.askyesno("Confirm", f"Delete '{self.presets[idx]['name']}'?"):
+        p = self.presets[idx]
+        if messagebox.askyesno("Confirm", f"Delete '{p['name']}'?"):
+            fname = p.get("_file")
+            if fname:
+                (PRESETS_DIR / fname).unlink(missing_ok=True)
             del self.presets[idx]
-            self._save_presets_file()
             self._refresh_preset_list()
 
     def _preset_use(self):
@@ -2141,44 +1982,44 @@ class VRCChatbox(tk.Tk):
         self._show_tab("chatbox")
 
     def _preset_export_html(self):
-        if not self.presets:
-            messagebox.showinfo("Export", "No presets to export.")
+        """Export a copy of a single selected preset .html file to a chosen location."""
+        sel = self._preset_lb.curselection()
+        if not sel:
+            messagebox.showinfo("Export", "Select a preset to export.")
             return
+        p = self.presets[sel[0]]
+        fname = p.get("_file") or _safe_filename(p.get("name", "preset"))
         path = filedialog.asksaveasfilename(
-            title="Save Presets HTML Copy",
+            title="Export Preset",
             defaultextension=".html",
-            initialfile="presets.html",
+            initialfile=fname,
             filetypes=[("HTML Files", "*.html"), ("All Files", "*.*")])
         if not path:
             return
-        html = build_presets_html(self.presets)
-        Path(path).write_text(html, encoding="utf-8")
-        messagebox.showinfo("Exported", f"Saved {len(self.presets)} presets to:\n{path}")
+        Path(path).write_text(_preset_to_html(p), encoding="utf-8")
+        messagebox.showinfo("Exported", f"Saved preset to:\n{path}")
 
     def _preset_import(self):
-        path = filedialog.askopenfilename(
-            title="Import Presets",
-            filetypes=[("Preset Files", "*.html *.json"), ("HTML Files", "*.html"),
-                       ("JSON Files", "*.json"), ("All", "*.*")])
-        if not path:
+        paths = filedialog.askopenfilenames(
+            title="Import Preset(s)",
+            filetypes=[("HTML Preset Files", "*.html"), ("All", "*.*")])
+        if not paths:
             return
-        try:
-            raw = Path(path).read_text(encoding="utf-8")
-            # Try HTML embedded data first
-            m = re.search(r'<!--PRESETS_DATA:(.*?):PRESETS_DATA-->', raw, re.DOTALL)
-            if m:
-                data = json.loads(m.group(1))
-            else:
-                data = json.loads(raw)
-            if isinstance(data, list):
-                self.presets.extend(data)
-            elif isinstance(data, dict) and "presets" in data:
-                self.presets.extend(data["presets"])
+        imported = 0
+        for path in paths:
+            try:
+                p = _html_to_preset(Path(path).read_text(encoding="utf-8"))
+                if p.get("name"):
+                    self.presets.append(p)
+                    imported += 1
+            except Exception:
+                pass
+        if imported:
             self._save_presets_file()
             self._refresh_preset_list()
-            messagebox.showinfo("Imported", f"Imported {len(self.presets)} presets.")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showinfo("Imported", f"Imported {imported} preset{'s' if imported != 1 else ''}.")
+        else:
+            messagebox.showwarning("Import", "No valid presets found in selected files.")
 
     # ── Macros ────────────────────────────────
 
