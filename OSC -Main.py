@@ -19,6 +19,7 @@ import http.server
 import urllib.request
 import urllib.parse
 import socketserver
+import random
 from pathlib import Path
 
 
@@ -225,6 +226,23 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     text = text.replace("{engine}", engine_tag if engine_on else "")
     if engine_on and "{engine}" not in text:
         text = text.rstrip() + "\n" + engine_tag
+
+    # ── {rand:min,max} — new random number macro ──────────────────────────
+    # Matches {rand:X,Y} and replaces with a random integer between X and Y
+    # inclusive. Re-rolled on every call (every loop tick / preview update).
+    def _rand_replace(m):
+        try:
+            lo = int(m.group(1))
+            hi = int(m.group(2))
+            if lo > hi:
+                lo, hi = hi, lo
+            return str(random.randint(lo, hi))
+        except Exception:
+            return m.group(0)          # leave unchanged if parse fails
+
+    text = re.sub(r'\{rand:(-?\d+),(-?\d+)\}', _rand_replace, text)
+    # ─────────────────────────────────────────────────────────────────────
+
     for direction in (1, 2):
         tag = f"/{{{'a'}}}{direction}/"
         while tag in text:
@@ -237,7 +255,7 @@ def resolve_vars(text: str, muted: bool, engine_on: bool = False) -> str:
     return text
 
 
-PYTHON_SEED = "Hm6KwZ3pNxQyT9Rv"
+PYTHON_SEED = "Xv9mT4nRqL2wJp8K"   # updated seed
 _app_start_ms = int(time.time() * 1000)
 _scroll_states = {}
 _queue: list = []
@@ -880,7 +898,7 @@ def _safe_filename(name: str) -> str:
 class VRCChatbox(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OSC Quest Engine  [Hm6KwZ3pNxQyT9Rv]")
+        self.title("OSC Quest Engine  [Xv9mT4nRqL2wJp8K]")
         self.configure(bg=DARK)
         self.geometry("980x680")
         self.minsize(780, 540)
@@ -1010,7 +1028,7 @@ class VRCChatbox(tk.Tk):
         self._build_tab_macros()
         self._build_tab_song()
         self._build_tab_player()
-        self._build_tab_poses()        # NEW
+        self._build_tab_poses()
         self._build_tab_ports()
         self._build_tab_output()
         self._build_tab_codedebug()
@@ -1025,7 +1043,7 @@ class VRCChatbox(tk.Tk):
             ("macros",   "Macros",    "⚡"),
             ("song",     "Song Sync", "🎵"),
             ("player",   "Player",    "▶"),
-            ("poses",    "Poses",     "🧍"),   # NEW
+            ("poses",    "Poses",     "🧍"),
             ("ports",    "Ports",     "🔌"),
             ("output",   "Output",    "📡"),
             ("codedebug","Code Debug","🐛"),
@@ -1211,7 +1229,6 @@ class VRCChatbox(tk.Tk):
         StyledButton(act_row, "💾 Save",   command=self._preset_save).pack(side="left")
         StyledButton(act_row, "🗑 Delete", color=ERR,
                      command=self._preset_delete).pack(side="left", padx=6)
-        # "Use" replaces chatbox content and switches tab
         StyledButton(act_row, "▶ Use",    color=SUCCESS,
                      command=self._preset_use).pack(side="left")
 
@@ -1229,13 +1246,14 @@ class VRCChatbox(tk.Tk):
                  font=FONT_HUGE).pack(side="left")
 
         rows = [
-            ("{mute}",    "Mute status icon",        "🔇Muted / 🔊Live"),
-            ("{time}",    "Current coast time",       "01:45 PM PST  /  04:45 PM EST"),
-            ("{song}",    "Now playing + time left",  "♪ Song Title [2:31]"),
-            ("{engine}",  "OSC Quest Engine tag",     "⚙ OSC Quest Engine"),
-            (r" \|\ ",    "Vertical separator gap",   "  |  "),
-            ("Alt+Y",     "Open Unicode picker",      "Inserts any Unicode char"),
-            ("Ctrl+↵",    "Send chatbox message",     "Keyboard shortcut to send"),
+            ("{mute}",         "Mute status icon",              "🔇Muted / 🔊Live"),
+            ("{time}",         "Current coast time",            "01:45 PM PST  /  04:45 PM EST"),
+            ("{song}",         "Now playing + time left",       "♪ Song Title [2:31]"),
+            ("{engine}",       "OSC Quest Engine tag",          "⚙ OSC Quest Engine"),
+            ("{rand:1,100}",   "Random number between min,max", "42  (re-rolls every update)"),
+            (r" \|\ ",         "Vertical separator gap",        "  |  "),
+            ("Alt+Y",          "Open Unicode picker",           "Inserts any Unicode char"),
+            ("Ctrl+↵",         "Send chatbox message",          "Keyboard shortcut to send"),
         ]
 
         for var, desc, ex in rows:
@@ -1243,7 +1261,7 @@ class VRCChatbox(tk.Tk):
                             highlightthickness=1, highlightbackground=BORDER)
             card.pack(fill="x", padx=28, pady=4)
             tk.Label(card, text=var, bg=CARD, fg=ACCENT, font=FONT_MONO,
-                     width=14, anchor="w").pack(side="left")
+                     width=18, anchor="w").pack(side="left")
             tk.Label(card, text=desc, bg=CARD, fg=TEXT, font=FONT_MAIN,
                      width=30, anchor="w").pack(side="left", padx=12)
             tk.Label(card, text=f"→ {ex}", bg=CARD, fg=MUTED, font=FONT_SMALL,
@@ -1314,7 +1332,7 @@ class VRCChatbox(tk.Tk):
         StyledButton(btn_row, "⏹ Stop", color=ERR,
                      command=self._stop_song).pack(side="left", padx=8)
 
-    # ── Tab: Poses (NEW) ──────────────────────
+    # ── Tab: Poses ────────────────────────────
 
     def _build_tab_poses(self):
         f = tk.Frame(self._content, bg=DARK)
@@ -1326,7 +1344,6 @@ class VRCChatbox(tk.Tk):
         tk.Label(hdr, text="Reset avatar bone poses via OSC on a timer",
                  bg=DARK, fg=MUTED, font=FONT_SMALL).pack(side="left", padx=(12, 0), pady=(6, 0))
 
-        # Info card
         info_card = tk.Frame(f, bg=CARD, padx=20, pady=14,
                              highlightthickness=1, highlightbackground=BORDER)
         info_card.pack(fill="x", padx=28, pady=(0, 14))
@@ -1341,12 +1358,10 @@ class VRCChatbox(tk.Tk):
                       "  AppData\\LocalLow\\VRChat\\VRChat\\OSC\\<userId>\\Avatars\\<avatarId>.json",
                  bg=CARD, fg=MUTED, font=FONT_SMALL, justify="left").pack(anchor="w")
 
-        # Controls card
         ctrl_card = tk.Frame(f, bg=CARD, padx=20, pady=20,
                              highlightthickness=1, highlightbackground=BORDER)
         ctrl_card.pack(fill="x", padx=28, pady=(0, 14))
 
-        # Interval row
         intv_row = tk.Frame(ctrl_card, bg=CARD)
         intv_row.pack(fill="x", pady=(0, 14))
         tk.Label(intv_row, text="Reset Interval:", bg=CARD, fg=MUTED,
@@ -1357,7 +1372,6 @@ class VRCChatbox(tk.Tk):
         tk.Label(intv_row, text="seconds", bg=CARD, fg=MUTED,
                  font=FONT_SMALL).pack(side="left")
 
-        # Custom OSC address row
         addr_row = tk.Frame(ctrl_card, bg=CARD)
         addr_row.pack(fill="x", pady=(0, 14))
         tk.Label(addr_row, text="OSC Address:", bg=CARD, fg=MUTED,
@@ -1366,7 +1380,6 @@ class VRCChatbox(tk.Tk):
         StyledEntry(addr_row, textvariable=self._pose_addr_var,
                     width=36).pack(side="left", padx=(0, 8))
 
-        # Value row
         val_row = tk.Frame(ctrl_card, bg=CARD)
         val_row.pack(fill="x", pady=(0, 18))
         tk.Label(val_row, text="Value (int):", bg=CARD, fg=MUTED,
@@ -1375,16 +1388,13 @@ class VRCChatbox(tk.Tk):
         StyledEntry(val_row, textvariable=self._pose_val_var,
                     width=8).pack(side="left")
 
-        # Start / Stop button
         self._pose_btn = StyledButton(ctrl_card, "▶  Start Pose Reset",
                                       color=SUCCESS, command=self._toggle_pose_reset)
         self._pose_btn.pack(side="left")
 
-        # Send once button
         StyledButton(ctrl_card, "⚡ Send Once", color=CARD,
                      command=self._pose_send_once).pack(side="left", padx=(12, 0))
 
-        # Status card
         self._pose_status_card = tk.Frame(f, bg=CARD, padx=20, pady=14,
                                           highlightthickness=1, highlightbackground=BORDER)
         self._pose_status_card.pack(fill="x", padx=28)
@@ -1438,7 +1448,6 @@ class VRCChatbox(tk.Tk):
     def _pose_reset_worker(self, interval: float):
         while self._pose_reset_active:
             self._pose_send_once()
-            # Sleep in small chunks so we stay responsive to stop
             elapsed = 0.0
             step = 0.1
             while elapsed < interval and self._pose_reset_active:
@@ -1619,7 +1628,7 @@ class VRCChatbox(tk.Tk):
     def _start_version_checker(self):
         def _check():
             server_ver = _html_cache.get("version", "")
-            local_ver  = "vBHY2b28ethDw77d"
+            local_ver  = "Xv9mT4nRqL2wJp8K"   # updated to match new seed
             if server_ver:
                 self._ver_label.config(text=server_ver)
                 if server_ver != local_ver:
@@ -1795,7 +1804,7 @@ class VRCChatbox(tk.Tk):
         self._tabs[key].pack(fill="both", expand=True)
         self._sidebar_btns[key].set_active(True)
 
-    # ── OSC / Send ─────────────────────────────────
+    # ── OSC / Send ────────────────────────────
 
     def _get_ip_port(self):
         return self.config_data["ip"], int(self.config_data["port"])
@@ -1884,7 +1893,7 @@ class VRCChatbox(tk.Tk):
         self._update_preview()
         self.after(2000, self._update_preview_loop)
 
-    # ── Mute ─────────────────────────────────
+    # ── Mute ──────────────────────────────────
 
     def _toggle_mute(self):
         self._muted = not self._muted
@@ -1947,7 +1956,6 @@ class VRCChatbox(tk.Tk):
             idx = sel[0]
             existing_file = self.presets[idx].get("_file")
             entry = {"name": name, "author": author, "text": text}
-            # If name changed, delete old file so _save_presets_file makes a new one
             if existing_file and _safe_filename(name) != existing_file:
                 (PRESETS_DIR / existing_file).unlink(missing_ok=True)
             else:
@@ -1972,7 +1980,6 @@ class VRCChatbox(tk.Tk):
             self._refresh_preset_list()
 
     def _preset_use(self):
-        """Replace chatbox text with this preset and switch to Chatbox tab."""
         text = self._preset_text.get("1.0", "end-1c")
         if not text.strip():
             return
@@ -1982,7 +1989,6 @@ class VRCChatbox(tk.Tk):
         self._show_tab("chatbox")
 
     def _preset_export_html(self):
-        """Export a copy of a single selected preset .html file to a chosen location."""
         sel = self._preset_lb.curselection()
         if not sel:
             messagebox.showinfo("Export", "Select a preset to export.")
@@ -2028,7 +2034,7 @@ class VRCChatbox(tk.Tk):
         self.clipboard_append(text)
         self._set_status(f"Copied: {text}", ACCENT)
 
-    # ── Song ─────────────────────────────────
+    # ── Song ──────────────────────────────────
 
     def _set_song_manual(self):
         title = self._song_title_var.get().strip()
@@ -2064,7 +2070,7 @@ class VRCChatbox(tk.Tk):
             self._ext_badge.config(text="", fg=MUTED)
         self.after(1000, self._poll_song)
 
-    # ── HTTP ─────────────────────────────────
+    # ── HTTP ──────────────────────────────────
 
     def _start_http(self):
         port = self.config_data["http_port"]
